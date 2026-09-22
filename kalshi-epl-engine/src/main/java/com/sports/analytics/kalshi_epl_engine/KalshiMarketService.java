@@ -17,21 +17,42 @@ public class KalshiMarketService {
     private final PoissonModel poissonModel;
     private final TickerParserService tickerParserService;
     private final XgService xgService;
+    private final ScraperHealthMonitor healthMonitor;
 
     public KalshiMarketService(PoissonModel poissonModel,
                                 TickerParserService tickerParserService,
-                                XgService xgService) {
+                                XgService xgService,
+                                ScraperHealthMonitor healthMonitor) {
         this.poissonModel = poissonModel;
         this.tickerParserService = tickerParserService;
         this.xgService = xgService;
+        this.healthMonitor = healthMonitor;
     }
 
-    public List<MarketEvaluation> evaluateLiveMarkets(double defaultHomeXG, double defaultAwayXG) {
+    /**
+     * Scans all active Kalshi EPL markets and evaluates each against our model.
+     *
+     * If Understat (the core xG data source) appears offline, this halts
+     * immediately and returns a status describing that, with no evaluations at
+     * all - we never silently substitute static ratings for real data. If a
+     * specific team just has no live data (e.g. not in our Understat mapping),
+     * that market is skipped individually with a reason, rather than treated as
+     * an outage. If FotMob (the lineup/injury refinement layer) is offline,
+     * evaluation proceeds normally but with a warning that those adjustments
+     * weren't applied this scan.
+     */
+    public MarketScanResult evaluateLiveMarkets() {
+        if (healthMonitor.isOffline(UnderstatScraperService.SOURCE)) {
+            return MarketScanResult.offline(UnderstatScraperService.SOURCE, healthMonitor.lastFailureReason(UnderstatScraperService.SOURCE));
+        }
+
         List<MarketEvaluation> results = new ArrayList<>();
+        List<SkippedMarket> skipped = new ArrayList<>();
+
         try {
             KalshiMarketResponse response = restTemplate.getForObject(KALSHI_URL, KalshiMarketResponse.class);
             if (response == null) {
-                return results;
+                return MarketScanResult.ok(fotMobWarning(), results, skipped);
             }
 
             for (KalshiEvent event : response.getEvents()) {
@@ -55,15 +76,28 @@ public class KalshiMarketService {
 
                     String homeTeam = teams.getKey().replaceAll("(?i)\\s+(wins|is the result)$", "").trim();
                     String awayTeam = teams.getValue().replaceAll("(?i)\\s+(wins|is the result)$", "").trim();
+                    String ticker = market.getTicker() == null ? "N/A" : market.getTicker();
+
+                    // A core-source outage detected mid-scan (started healthy, failed partway
+                    // through) - stop evaluating rather than mix real and now-stale data.
+                    if (healthMonitor.isOffline(UnderstatScraperService.SOURCE)) {
+                        return MarketScanResult.offline(UnderstatScraperService.SOURCE, healthMonitor.lastFailureReason(UnderstatScraperService.SOURCE));
+                    }
 
                     Optional<LocalDate> matchDate = tickerParserService.parseMatchDateFromTicker(market.getTicker());
 
-                    double homeXG = xgService.calculateHomeXG(homeTeam, awayTeam, matchDate);
-                    double awayXG = xgService.calculateAwayXG(homeTeam, awayTeam, matchDate);
+                    Optional<Double> homeXG = xgService.calculateHomeXG(homeTeam, awayTeam, matchDate);
+                    Optional<Double> awayXG = xgService.calculateAwayXG(homeTeam, awayTeam, matchDate);
+
+                    if (homeXG.isEmpty() || awayXG.isEmpty()) {
+                        skipped.add(new SkippedMarket(ticker, fullTitle, "No live xG data for " + homeTeam + " and/or " + awayTeam
+                            + " (not in our Understat mapping, or no completed matches yet this season)."));
+                        continue;
+                    }
 
                     String marketType = resolveMarketType(market, rawTitle, homeTeam, awayTeam);
 
-                    double modelProb = poissonModel.calculateMarketProbability(homeXG, awayXG, marketType);
+                    double modelProb = poissonModel.calculateMarketProbability(homeXG.get(), awayXG.get(), marketType);
 
                     int priceCents = market.resolvePriceCents();
                     // Skip if there's truly no active market pricing available
@@ -96,9 +130,6 @@ public class KalshiMarketService {
                         rec = "FAIR VALUE";
                     }
 
-                    String ticker = market.getTicker() == null ? "N/A" : market.getTicker();
-                    String xgDataSource = xgService.hasLiveDataFor(homeTeam, awayTeam) ? "understat-live" : "static-fallback";
-
                     results.add(new MarketEvaluation(
                         ticker,
                         fullTitle,
@@ -108,7 +139,7 @@ public class KalshiMarketService {
                         edgeStr,
                         rec,
                         kellyWager,
-                        xgDataSource
+                        "understat-live"
                     ));
                 }
             }
@@ -117,7 +148,13 @@ public class KalshiMarketService {
             e.printStackTrace();
         }
 
-        return results;
+        return MarketScanResult.ok(fotMobWarning(), results, skipped);
+    }
+
+    private String fotMobWarning() {
+        return healthMonitor.isOffline(FotMobClient.SOURCE)
+            ? "FotMob scraper appears offline - lineup/injury adjustments were not applied this scan."
+            : null;
     }
 
     /**

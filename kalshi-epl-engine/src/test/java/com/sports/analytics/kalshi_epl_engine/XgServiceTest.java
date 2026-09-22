@@ -33,22 +33,31 @@ class XgServiceTest {
         when(provider.getRating("Fulham")).thenReturn(Optional.of(new TeamXgRating(1.1, 1.6, 6)));
 
         // homeXG = homeAttack(2.2)*0.6 + (2.0 - awayDefense(1.6))*0.4 = 1.32 + 0.16 = 1.48
-        double homeXg = xgService.calculateHomeXG("Arsenal", "Fulham");
-        assertEquals(1.48, homeXg, 0.001);
+        Optional<Double> homeXg = xgService.calculateHomeXG("Arsenal", "Fulham");
+        assertTrue(homeXg.isPresent());
+        assertEquals(1.48, homeXg.get(), 0.001);
 
         assertTrue(xgService.hasLiveDataFor("Arsenal", "Fulham"));
     }
 
     @Test
-    void fallsBackToStaticTableWhenLiveDataUnavailableForOneTeam() {
+    void returnsEmptyWhenLiveDataUnavailableForOneTeamRatherThanFallingBackToAStaticGuess() {
         when(provider.getRating("Arsenal")).thenReturn(Optional.empty());
         when(provider.getRating("Some Newly Promoted Club")).thenReturn(Optional.empty());
 
-        // Should not throw, and should not report live data available.
-        double homeXg = xgService.calculateHomeXG("Arsenal", "Some Newly Promoted Club");
-        assertTrue(homeXg > 0);
+        Optional<Double> homeXg = xgService.calculateHomeXG("Arsenal", "Some Newly Promoted Club");
+        assertTrue(homeXg.isEmpty(), "should return empty rather than a static-table guess when live data is missing");
 
         assertFalse(xgService.hasLiveDataFor("Arsenal", "Some Newly Promoted Club"));
+    }
+
+    @Test
+    void returnsEmptyWhenOnlyOneSideHasLiveData() {
+        when(provider.getRating("Arsenal")).thenReturn(Optional.of(new TeamXgRating(2.2, 0.9, 6)));
+        when(provider.getRating("Some Newly Promoted Club")).thenReturn(Optional.empty());
+
+        assertTrue(xgService.calculateHomeXG("Arsenal", "Some Newly Promoted Club").isEmpty());
+        assertTrue(xgService.calculateAwayXG("Arsenal", "Some Newly Promoted Club").isEmpty());
     }
 
     @Test
@@ -57,8 +66,9 @@ class XgServiceTest {
         when(provider.getRating("Fulham")).thenReturn(Optional.of(new TeamXgRating(1.1, 1.6, 6)));
 
         // awayXG = awayAttack(1.1)*0.6 + (2.0 - homeDefense(0.9))*0.4 = 0.66 + 0.44 = 1.10
-        double awayXg = xgService.calculateAwayXG("Arsenal", "Fulham");
-        assertEquals(1.10, awayXg, 0.001);
+        Optional<Double> awayXg = xgService.calculateAwayXG("Arsenal", "Fulham");
+        assertTrue(awayXg.isPresent());
+        assertEquals(1.10, awayXg.get(), 0.001);
     }
 
     @Test
@@ -75,10 +85,11 @@ class XgServiceTest {
         when(adjuster.adjust(eq("Arsenal"), eq(new TeamXgRating(2.0, 1.0, 6)), any()))
             .thenReturn(new TeamXgRating(3.0, 1.0, 6));
 
-        double homeXg = xgService.calculateHomeXG("Arsenal", "Fulham");
+        Optional<Double> homeXg = xgService.calculateHomeXG("Arsenal", "Fulham");
 
         // homeXG should reflect the ADJUSTED attack (3.0), not the raw base (2.0):
         // 3.0*0.6 + (2.0 - 1.0)*0.4 = 1.8 + 0.4 = 2.2
-        assertEquals(2.2, homeXg, 0.001);
+        assertTrue(homeXg.isPresent());
+        assertEquals(2.2, homeXg.get(), 0.001);
     }
 }

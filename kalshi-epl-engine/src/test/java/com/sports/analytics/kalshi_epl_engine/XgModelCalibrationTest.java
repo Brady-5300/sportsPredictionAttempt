@@ -17,7 +17,7 @@ class XgModelCalibrationTest {
 
     @Test
     void calibrateAgainstLastFullSeason() {
-        UnderstatScraperService scraper = new UnderstatScraperService();
+        UnderstatScraperService scraper = new UnderstatScraperService(new ScraperHealthMonitor());
         ShotXgCalculator geometry = new ShotXgCalculator();
         ShotFeatureExtractor featureExtractor = new ShotFeatureExtractor(geometry);
         XgModelCalibrator calibrator = new XgModelCalibrator(scraper, featureExtractor);

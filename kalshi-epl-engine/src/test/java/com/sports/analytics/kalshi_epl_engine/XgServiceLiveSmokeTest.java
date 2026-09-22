@@ -3,6 +3,8 @@ package com.sports.analytics.kalshi_epl_engine;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
+import java.util.Optional;
+
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -14,7 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class XgServiceLiveSmokeTest {
 
     private final TeamNameResolver resolver = new TeamNameResolver();
-    private final UnderstatScraperService scraper = new UnderstatScraperService();
+    private final UnderstatScraperService scraper = new UnderstatScraperService(new ScraperHealthMonitor());
     private final ShotXgCalculator calculator = new ShotXgCalculator();
     private final UnderstatXgProvider provider = new UnderstatXgProvider(scraper, calculator, resolver);
     private final FotMobClient fotMobClient =
@@ -25,14 +27,14 @@ class XgServiceLiveSmokeTest {
 
     @Test
     void computesLiveXgForARealFixture() {
-        double homeXg = xgService.calculateHomeXG("Arsenal", "Fulham");
-        double awayXg = xgService.calculateAwayXG("Arsenal", "Fulham");
+        Optional<Double> homeXg = xgService.calculateHomeXG("Arsenal", "Fulham");
+        Optional<Double> awayXg = xgService.calculateAwayXG("Arsenal", "Fulham");
         boolean live = xgService.hasLiveDataFor("Arsenal", "Fulham");
 
         System.out.println("Arsenal (home) xG: " + homeXg + ", Fulham (away) xG: " + awayXg + ", live=" + live);
 
         assertTrue(live, "expected live Understat data for two known current EPL teams");
-        assertTrue(homeXg > 0 && homeXg < 5, "home xG (" + homeXg + ") should be a plausible match xG value");
-        assertTrue(awayXg > 0 && awayXg < 5, "away xG (" + awayXg + ") should be a plausible match xG value");
+        assertTrue(homeXg.isPresent() && homeXg.get() > 0 && homeXg.get() < 5, "home xG (" + homeXg + ") should be a plausible match xG value");
+        assertTrue(awayXg.isPresent() && awayXg.get() > 0 && awayXg.get() < 5, "away xG (" + awayXg + ") should be a plausible match xG value");
     }
 }

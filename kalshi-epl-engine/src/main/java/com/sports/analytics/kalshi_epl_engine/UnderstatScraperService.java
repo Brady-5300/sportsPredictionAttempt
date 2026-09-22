@@ -31,9 +31,17 @@ import java.util.zip.GZIPInputStream;
 @Service
 public class UnderstatScraperService {
 
+    /** Source name used with {@link ScraperHealthMonitor}. */
+    public static final String SOURCE = "understat";
+
     private static final String BASE_URL = "https://understat.com";
     private final RestTemplate restTemplate = new RestTemplate();
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ScraperHealthMonitor healthMonitor;
+
+    public UnderstatScraperService(ScraperHealthMonitor healthMonitor) {
+        this.healthMonitor = healthMonitor;
+    }
 
     /**
      * Fetches a team's fixture list for a given season (Understat identifies a
@@ -43,9 +51,12 @@ public class UnderstatScraperService {
         String url = BASE_URL + "/getTeamData/" + understatTeamSlug + "/" + season;
         try {
             String json = getAsAjax(url);
-            return parseTeamMatches(json);
+            List<UnderstatTeamMatch> result = parseTeamMatches(json);
+            healthMonitor.recordSuccess(SOURCE);
+            return result;
         } catch (Exception e) {
             System.err.println("[UNDERSTAT] Failed to fetch team matches for " + understatTeamSlug + ": " + e.getMessage());
+            healthMonitor.recordFailure(SOURCE, e.getMessage());
             return new ArrayList<>();
         }
     }
@@ -57,9 +68,12 @@ public class UnderstatScraperService {
         String url = BASE_URL + "/getMatchData/" + matchId;
         try {
             String json = getAsAjax(url);
-            return parseMatchShots(json);
+            Map<String, List<UnderstatShot>> result = parseMatchShots(json);
+            healthMonitor.recordSuccess(SOURCE);
+            return result;
         } catch (Exception e) {
             System.err.println("[UNDERSTAT] Failed to fetch shots for match " + matchId + ": " + e.getMessage());
+            healthMonitor.recordFailure(SOURCE, e.getMessage());
             return Map.of("h", new ArrayList<>(), "a", new ArrayList<>());
         }
     }
@@ -73,9 +87,12 @@ public class UnderstatScraperService {
         String url = BASE_URL + "/getMatchData/" + matchId;
         try {
             String json = getAsAjax(url);
-            return new UnderstatMatchDetails(parseMatchShots(json), parseMatchRosters(json));
+            UnderstatMatchDetails result = new UnderstatMatchDetails(parseMatchShots(json), parseMatchRosters(json));
+            healthMonitor.recordSuccess(SOURCE);
+            return result;
         } catch (Exception e) {
             System.err.println("[UNDERSTAT] Failed to fetch match details for " + matchId + ": " + e.getMessage());
+            healthMonitor.recordFailure(SOURCE, e.getMessage());
             return UnderstatMatchDetails.empty();
         }
     }

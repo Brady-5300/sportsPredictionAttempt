@@ -10,7 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class UnderstatScraperServiceTest {
 
-    private final UnderstatScraperService scraper = new UnderstatScraperService();
+    private final UnderstatScraperService scraper = new UnderstatScraperService(new ScraperHealthMonitor());
 
     // Trimmed real payload shape from GET /getTeamData/Arsenal/2024 (captured 2026-09-22).
     private static final String TEAM_DATA_JSON = """

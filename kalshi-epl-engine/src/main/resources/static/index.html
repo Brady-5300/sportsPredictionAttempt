@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EPL Engine</title>
+<style>
+  :root {
+    --green: #0AC285;
+    --green-bg: rgba(10, 194, 133, 0.12);
+    --green-bg-strong: rgba(10, 194, 133, 0.16);
+    --red: #D91616;
+    --red-bg: rgba(217, 22, 22, 0.1);
+    --amber: #F2BA49;
+    --amber-bg: rgba(242, 186, 73, 0.15);
+    --text: rgba(0, 0, 0, 0.9);
+    --text-secondary: rgba(0, 0, 0, 0.55);
+    --text-faint: rgba(0, 0, 0, 0.35);
+    --border: rgba(0, 0, 0, 0.07);
+    --border-strong: rgba(0, 0, 0, 0.12);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: #ffffff;
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 800;
+    font-size: 20px;
+  }
+
+  .brand .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--green);
+  }
+
+  .brand-sub {
+    color: var(--text-secondary);
+    font-weight: 500;
+    font-size: 13px;
+    margin-left: 4px;
+  }
+
+  .refresh-info {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+
+  #refreshBtn {
+    border: 1px solid var(--border-strong);
+    background: #fff;
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    cursor: pointer;
+  }
+  #refreshBtn:hover { background: rgba(0,0,0,0.03); }
+  #refreshBtn:disabled { opacity: 0.5; cursor: default; }
+
+  main {
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 24px 16px 80px;
+  }
+
+  .banner {
+    display: none;
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-bottom: 20px;
+    font-size: 14px;
+    line-height: 1.5;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .banner.show { display: flex; }
+  .banner .icon { font-size: 16px; line-height: 1.4; }
+  .banner strong { display: block; margin-bottom: 2px; }
+
+  .banner-offline { background: var(--red-bg); color: #7a0f0f; }
+  .banner-offline strong { color: var(--red); }
+
+  .banner-warning { background: var(--amber-bg); color: #6b5312; }
+  .banner-warning strong { color: #8a6a12; }
+
+  .section-title {
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-secondary);
+    margin: 28px 0 10px;
+  }
+
+  .section-title:first-child { margin-top: 0; }
+
+  .card-list {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  .market-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+    gap: 16px;
+  }
+  .market-row:last-child { border-bottom: none; }
+
+  .market-left {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  .market-title {
+    font-weight: 600;
+    font-size: 14.5px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .market-meta {
+    font-size: 12.5px;
+    color: var(--text-secondary);
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .market-meta .ticker {
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    color: var(--text-faint);
+  }
+
+  .market-right {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    flex-shrink: 0;
+  }
+
+  .stat {
+    text-align: right;
+    min-width: 54px;
+  }
+  .stat .label {
+    font-size: 10.5px;
+    color: var(--text-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .stat .value {
+    font-size: 14px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 6px 12px;
+    border-radius: 999px;
+    font-weight: 700;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+  .badge-yes { background: var(--green-bg-strong); color: var(--green); }
+  .badge-no { background: var(--red-bg); color: var(--red); }
+  .badge-fair { background: rgba(0,0,0,0.05); color: var(--text-secondary); }
+
+  .skipped-row {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+  }
+  .skipped-row:last-child { border-bottom: none; }
+  .skipped-row .title { font-weight: 600; margin-bottom: 2px; }
+  .skipped-row .reason { color: var(--text-secondary); }
+
+  .empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text-secondary);
+    font-size: 14px;
+  }
+
+  .empty-state .big { font-size: 15px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
+
+  .pulse {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--green);
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+  }
+
+  @media (max-width: 640px) {
+    .market-row { flex-wrap: wrap; }
+    .market-right { width: 100%; justify-content: space-between; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <span class="dot"></span>
+    EPL Engine
+    <span class="brand-sub">Kalshi market scanner</span>
+  </div>
+  <div class="refresh-info">
+    <span class="pulse" id="pulseDot"></span>
+    <span id="lastUpdated">Loading&hellip;</span>
+    <button id="refreshBtn">Refresh</button>
+  </div>
+</header>
+
+<main>
+  <div class="banner banner-offline" id="offlineBanner">
+    <span class="icon">&#9888;</span>
+    <div>
+      <strong>Scrapers offline</strong>
+      <span id="offlineMessage"></span>
+    </div>
+  </div>
+
+  <div class="banner banner-warning" id="warningBanner">
+    <span class="icon">&#9888;</span>
+    <div>
+      <strong>Partial data</strong>
+      <span id="warningMessage"></span>
+    </div>
+  </div>
+
+  <div id="content"></div>
+</main>
+
+<script>
+  const REFRESH_INTERVAL_MS = 30000;
+  let refreshTimer = null;
+
+  function fmtTime(date) {
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
+
+  function badgeClass(rec) {
+    if (rec && rec.startsWith('YES')) return 'badge-yes';
+    if (rec && rec.startsWith('NO')) return 'badge-no';
+    return 'badge-fair';
+  }
+
+  function renderMarketRow(m) {
+    return `
+      <div class="market-row">
+        <div class="market-left">
+          <div class="market-title">${escapeHtml(m.title)}</div>
+          <div class="market-meta">
+            <span class="ticker">${escapeHtml(m.ticker)}</span>
+            <span>Model ${escapeHtml(m.modelProbability)}</span>
+            <span>Market ${escapeHtml(m.marketProbability)}</span>
+            <span>Edge ${escapeHtml(m.edge)}</span>
+          </div>
+        </div>
+        <div class="market-right">
+          <div class="stat">
+            <div class="label">Price</div>
+            <div class="value">${m.kalshiPriceCents}&cent;</div>
+          </div>
+          <div class="stat">
+            <div class="label">Kelly</div>
+            <div class="value">${m.recommendedWagerPercent.toFixed(1)}%</div>
+          </div>
+          <span class="badge ${badgeClass(m.recommendation)}">${escapeHtml(m.recommendation)}</span>
+        </div>
+      </div>`;
+  }
+
+  function renderSkippedRow(s) {
+    return `
+      <div class="skipped-row">
+        <div class="title">${escapeHtml(s.title)} <span style="color:var(--text-faint);font-weight:400;">(${escapeHtml(s.ticker)})</span></div>
+        <div class="reason">${escapeHtml(s.reason)}</div>
+      </div>`;
+  }
+
+  function escapeHtml(str) {
+    if (str === null || str === undefined) return '';
+    return String(str)
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;');
+  }
+
+  async function loadData() {
+    const btn = document.getElementById('refreshBtn');
+    btn.disabled = true;
+    btn.textContent = 'Refreshing…';
+
+    try {
+      const res = await fetch('/api/kalshi/scan');
+      const data = await res.json();
+      render(data);
+      document.getElementById('lastUpdated').textContent = 'Updated ' + fmtTime(new Date());
+    } catch (e) {
+      document.getElementById('lastUpdated').textContent = 'Failed to load: ' + e.message;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Refresh';
+    }
+  }
+
+  function render(data) {
+    const offlineBanner = document.getElementById('offlineBanner');
+    const warningBanner = document.getElementById('warningBanner');
+    const content = document.getElementById('content');
+
+    if (data.status !== 'OK') {
+      offlineBanner.classList.add('show');
+      document.getElementById('offlineMessage').textContent = data.message || 'A core data source is unavailable.';
+      warningBanner.classList.remove('show');
+      content.innerHTML = `
+        <div class="empty-state">
+          <div class="big">No markets evaluated</div>
+          <div>Waiting for the data source to recover before scanning resumes.</div>
+        </div>`;
+      return;
+    }
+
+    offlineBanner.classList.remove('show');
+
+    if (data.warning) {
+      warningBanner.classList.add('show');
+      document.getElementById('warningMessage').textContent = data.warning;
+    } else {
+      warningBanner.classList.remove('show');
+    }
+
+    let html = '';
+
+    if (data.evaluations && data.evaluations.length > 0) {
+      html += '<div class="section-title">Markets</div>';
+      html += '<div class="card-list">' + data.evaluations.map(renderMarketRow).join('') + '</div>';
+    } else {
+      html += `
+        <div class="empty-state">
+          <div class="big">No active markets right now</div>
+          <div>Check back closer to kickoff.</div>
+        </div>`;
+    }
+
+    if (data.skipped && data.skipped.length > 0) {
+      html += '<div class="section-title">Skipped (' + data.skipped.length + ')</div>';
+      html += '<div class="card-list">' + data.skipped.map(renderSkippedRow).join('') + '</div>';
+    }
+
+    content.innerHTML = html;
+  }
+
+  document.getElementById('refreshBtn').addEventListener('click', loadData);
+
+  loadData();
+  refreshTimer = setInterval(loadData, REFRESH_INTERVAL_MS);
+</script>
+
+</body>
+</html>

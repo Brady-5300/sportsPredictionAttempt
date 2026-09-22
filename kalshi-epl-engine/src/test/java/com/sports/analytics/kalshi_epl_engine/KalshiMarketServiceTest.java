@@ -3,12 +3,16 @@ package com.sports.analytics.kalshi_epl_engine;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class KalshiMarketServiceTest {
 
     private final TeamNameResolver teamNameResolver = new TeamNameResolver();
     private final UnderstatXgProvider understatXgProvider =
-        new UnderstatXgProvider(new UnderstatScraperService(), new ShotXgCalculator(), teamNameResolver);
+        new UnderstatXgProvider(new UnderstatScraperService(new ScraperHealthMonitor()), new ShotXgCalculator(), teamNameResolver);
     private final FotMobClient fotMobClient =
         new FotMobClient("https://www.fotmob.com", new org.springframework.web.client.RestTemplate());
     private final KalshiMarketService service = new KalshiMarketService(
@@ -18,7 +22,8 @@ class KalshiMarketServiceTest {
             teamNameResolver,
             understatXgProvider,
             new LineupFormAdjustmentService(fotMobClient, understatXgProvider)
-        )
+        ),
+        new ScraperHealthMonitor()
     );
 
     private KalshiMarket marketWithTicker(String ticker) {
@@ -84,5 +89,32 @@ class KalshiMarketServiceTest {
         KalshiMarket market = marketWithTicker("KXEPLGAME-26SEP20XXXYYY-ZZZ");
         String type = service.resolveMarketType(market, "Ambiguous title mentioning neither team clearly", "Team X", "Team Y");
         assertEquals("HOME", type);
+    }
+
+    @Test
+    void haltsScanWithNoEvaluationsWhenUnderstatIsOffline() {
+        // Mocked health monitor so this never needs to hit the real Kalshi API -
+        // the offline check must short-circuit before any network call.
+        ScraperHealthMonitor offlineMonitor = mock(ScraperHealthMonitor.class);
+        when(offlineMonitor.isOffline(UnderstatScraperService.SOURCE)).thenReturn(true);
+        when(offlineMonitor.lastFailureReason(UnderstatScraperService.SOURCE)).thenReturn("connection timed out");
+
+        KalshiMarketService offlineService = new KalshiMarketService(
+            new PoissonModel(),
+            new TickerParserService(),
+            new XgService(
+                teamNameResolver,
+                understatXgProvider,
+                new LineupFormAdjustmentService(fotMobClient, understatXgProvider)
+            ),
+            offlineMonitor
+        );
+
+        MarketScanResult result = offlineService.evaluateLiveMarkets();
+
+        assertEquals(MarketScanResult.STATUS_UNDERSTAT_OFFLINE, result.status());
+        assertTrue(result.evaluations().isEmpty());
+        assertNotNull(result.message());
+        assertTrue(result.message().contains("connection timed out"));
     }
 }

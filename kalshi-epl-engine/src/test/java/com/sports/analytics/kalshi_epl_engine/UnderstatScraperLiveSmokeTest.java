@@ -16,7 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 @Disabled("manual verification only - hits live understat.com")
 class UnderstatScraperLiveSmokeTest {
 
-    private final UnderstatScraperService scraper = new UnderstatScraperService();
+    private final UnderstatScraperService scraper = new UnderstatScraperService(new ScraperHealthMonitor());
 
     @Test
     void fetchesRealTeamMatches() {

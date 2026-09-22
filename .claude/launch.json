@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "kalshi-epl-engine",
+      "runtimeExecutable": "C:\\Users\\99kil\\OneDrive\\Desktop\\sportsPredictionAttempt\\kalshi-epl-engine\\mvnw.cmd",
+      "runtimeArgs": ["-f", "C:\\Users\\99kil\\OneDrive\\Desktop\\sportsPredictionAttempt\\kalshi-epl-engine\\pom.xml", "spring-boot:run"],
+      "port": 8080
+    }
+  ]
+}

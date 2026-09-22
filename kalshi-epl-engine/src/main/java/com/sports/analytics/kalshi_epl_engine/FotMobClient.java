@@ -40,6 +40,9 @@ import java.util.concurrent.ConcurrentHashMap;
 @Service
 public class FotMobClient {
 
+    /** Source name used with {@link ScraperHealthMonitor}. */
+    public static final String SOURCE = "fotmob";
+
     // Both this API and the old RapidAPI reseller use this numbering; multiple
     // countries have a competition literally named "Premier League" (e.g. Ghana's
     // is a different id), so team/league resolution must match on this id, not the name.
@@ -47,41 +50,57 @@ public class FotMobClient {
 
     private final String baseUrl;
     private final RestTemplate restTemplate;
+    private final ScraperHealthMonitor healthMonitor;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final ConcurrentHashMap<String, Optional<Integer>> teamIdCache = new ConcurrentHashMap<>();
 
     @Autowired
-    public FotMobClient(@Value("${fotmob.base-url}") String baseUrl) {
+    public FotMobClient(@Value("${fotmob.base-url}") String baseUrl, ScraperHealthMonitor healthMonitor) {
         this.baseUrl = baseUrl;
+        this.healthMonitor = healthMonitor;
         this.restTemplate = new RestTemplate();
     }
 
-    // Test-only constructor: inject a mock RestTemplate.
+    // Test-only constructor: inject a mock RestTemplate, no health monitor.
     FotMobClient(String baseUrl, RestTemplate restTemplate) {
         this.baseUrl = baseUrl;
         this.restTemplate = restTemplate;
+        this.healthMonitor = new ScraperHealthMonitor();
     }
 
-    /** Resolves an EPL team's name to FotMob's internal numeric team id. Cached indefinitely. */
+    /**
+     * Resolves an EPL team's name to FotMob's internal numeric team id. Cached
+     * indefinitely, but only on a successful fetch - a transient failure isn't
+     * cached as "no such team", so it's retried on the next call.
+     */
     public Optional<Integer> resolveTeamId(String teamName) {
-        return teamIdCache.computeIfAbsent(teamName.toLowerCase(Locale.ROOT), key -> {
-            try {
-                String json = get("/api/data/search/suggest?hits=50&lang=en&term=" + URLEncoder.encode(teamName, StandardCharsets.UTF_8));
-                return parseTeamSearch(json);
-            } catch (Exception e) {
-                System.err.println("[FOTMOB] Failed to resolve team id for " + teamName + ": " + e.getMessage());
-                return Optional.empty();
-            }
-        });
+        String key = teamName.toLowerCase(Locale.ROOT);
+        Optional<Integer> cached = teamIdCache.get(key);
+        if (cached != null) return cached;
+
+        try {
+            String json = get("/api/data/search/suggest?hits=50&lang=en&term=" + URLEncoder.encode(teamName, StandardCharsets.UTF_8));
+            Optional<Integer> result = parseTeamSearch(json);
+            healthMonitor.recordSuccess(SOURCE);
+            teamIdCache.put(key, result);
+            return result;
+        } catch (Exception e) {
+            System.err.println("[FOTMOB] Failed to resolve team id for " + teamName + ": " + e.getMessage());
+            healthMonitor.recordFailure(SOURCE, e.getMessage());
+            return Optional.empty();
+        }
     }
 
     /** This team's full fixture list (past and upcoming, all competitions). */
     public List<FotMobFixture> fetchFixtures(int teamId) {
         try {
             String json = get("/api/data/teams?id=" + teamId);
-            return parseFixtures(json);
+            List<FotMobFixture> result = parseFixtures(json);
+            healthMonitor.recordSuccess(SOURCE);
+            return result;
         } catch (Exception e) {
             System.err.println("[FOTMOB] Failed to fetch fixtures for team " + teamId + ": " + e.getMessage());
+            healthMonitor.recordFailure(SOURCE, e.getMessage());
             return List.of();
         }
     }
@@ -90,9 +109,12 @@ public class FotMobClient {
     public FotMobMatchLineups fetchMatchLineups(int matchId) {
         try {
             String json = get("/api/data/matchDetails?matchId=" + matchId);
-            return parseMatchLineups(json);
+            FotMobMatchLineups result = parseMatchLineups(json);
+            healthMonitor.recordSuccess(SOURCE);
+            return result;
         } catch (Exception e) {
             System.err.println("[FOTMOB] Failed to fetch lineups for match " + matchId + ": " + e.getMessage());
+            healthMonitor.recordFailure(SOURCE, e.getMessage());
             return FotMobMatchLineups.empty();
         }
     }
