@@ -64,13 +64,27 @@ public class PoissonModel {
 
     public double calculateKellyWagerPercent(double modelProb, int priceCents) {
         if (priceCents <= 0 || priceCents >= 100) return 0.0;
-        
-        double b = (100.0 / priceCents) - 1.0; 
+
+        double b = (100.0 / priceCents) - 1.0;
         double p = modelProb;
         double q = 1.0 - p;
 
         double kellyFraction = (p * b - q) / b;
-        double quarterKelly = kellyFraction * 0.25; 
+        double quarterKelly = kellyFraction * 0.25;
         return Math.max(0.0, Math.round(quarterKelly * 10000.0) / 100.0);
+    }
+
+    /**
+     * Estimates Kalshi's per-contract trading fee, in cents, using their published
+     * fee schedule: fee = ceil(0.07 * price * (1 - price) * 100), where price is the
+     * contract price in dollars (0 to 1). Fee peaks at the 50c price point and shrinks
+     * toward the extremes.
+     */
+    public int calculateKalshiFeeCents(int priceCents) {
+        if (priceCents <= 0 || priceCents >= 100) return 0;
+
+        double price = priceCents / 100.0;
+        double feeDollars = 0.07 * price * (1.0 - price);
+        return (int) Math.ceil(feeDollars * 100.0);
     }
 }

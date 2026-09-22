@@ -9,10 +9,12 @@ public class MarketEvaluation {
     private String edge;
     private String recommendation;
     private double recommendedWagerPercent;
+    private String xgDataSource;
 
-    public MarketEvaluation(String ticker, String title, int kalshiPriceCents, 
-                            String modelProbability, String marketProbability, 
-                            String edge, String recommendation, double recommendedWagerPercent) {
+    public MarketEvaluation(String ticker, String title, int kalshiPriceCents,
+                            String modelProbability, String marketProbability,
+                            String edge, String recommendation, double recommendedWagerPercent,
+                            String xgDataSource) {
         this.ticker = ticker;
         this.title = title;
         this.kalshiPriceCents = kalshiPriceCents;
@@ -21,6 +23,7 @@ public class MarketEvaluation {
         this.edge = edge;
         this.recommendation = recommendation;
         this.recommendedWagerPercent = recommendedWagerPercent;
+        this.xgDataSource = xgDataSource;
     }
 
     public String getTicker() { return ticker; }
@@ -31,6 +34,7 @@ public class MarketEvaluation {
     public String getEdge() { return edge; }
     public String getRecommendation() { return recommendation; }
     public double getRecommendedWagerPercent() { return recommendedWagerPercent; }
+    public String getXgDataSource() { return xgDataSource; }
 
     @Override
     public String toString() {
@@ -43,9 +47,10 @@ public class MarketEvaluation {
             "Model Prob:  %s%n" +
             "Edge:        %s%n" +
             "Action:      %s%n" +
-            "Kelly Wager: %.2f%%%n",
+            "Kelly Wager: %.2f%%%n" +
+            "xG Source:   %s%n",
             ticker, title, kalshiPriceCents, marketProbability,
-            modelProbability, edge, recommendation, recommendedWagerPercent
+            modelProbability, edge, recommendation, recommendedWagerPercent, xgDataSource
         );
     }
 }

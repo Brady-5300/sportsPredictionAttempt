@@ -28,12 +28,16 @@ public class PredictionController {
 
         double modelProb = poissonModel.calculateMarketProbability(homeXG, awayXG, marketType);
         double marketProb = kalshiPriceCents / 100.0;
-        double edge = modelProb - marketProb;
+
+        int entryFeeCents = poissonModel.calculateKalshiFeeCents(kalshiPriceCents);
+        double entryFeeProb = entryFeeCents / 100.0;
+        double edge = modelProb - marketProb - entryFeeProb;
 
         Map<String, Object> response = new HashMap<>();
         response.put("market_type", marketType.toUpperCase());
         response.put("model_probability", Math.round(modelProb * 10000.0) / 100.0 + "%");
         response.put("kalshi_market_probability", marketProb * 100.0 + "%");
+        response.put("estimated_fee_cents", entryFeeCents);
         response.put("edge", Math.round(edge * 10000.0) / 100.0 + "%");
         response.put("recommendation", edge > 0.05 ? "BUY YES (Undervalued)" : "PASS / NO EDGE");
 

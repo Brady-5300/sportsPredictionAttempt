@@ -2,29 +2,66 @@ package com.sports.analytics.kalshi_epl_engine;
 
 import org.springframework.stereotype.Service;
 
+import java.util.Optional;
+
 @Service
 public class XgService {
 
-    public double calculateHomeXG(String homeTeam, String awayTeam) {
-        String homeKey = normalizeTeamName(homeTeam);
-        String awayKey = normalizeTeamName(awayTeam);
+    private final TeamNameResolver teamNameResolver;
+    private final UnderstatXgProvider understatXgProvider;
 
-        double homeAttack = getAttackRating(homeKey);
-        double awayDefense = getDefenseRating(awayKey);
+    public XgService(TeamNameResolver teamNameResolver, UnderstatXgProvider understatXgProvider) {
+        this.teamNameResolver = teamNameResolver;
+        this.understatXgProvider = understatXgProvider;
+    }
+
+    /**
+     * Home team's expected goals: their live rolling-average attack (goals scored)
+     * combined with the away team's live rolling-average defense (goals conceded),
+     * falling back to the static rating table for whichever side has no live data.
+     */
+    public double calculateHomeXG(String homeTeam, String awayTeam) {
+        Optional<TeamXgRating> homeRating = understatXgProvider.getRating(homeTeam);
+        Optional<TeamXgRating> awayRating = understatXgProvider.getRating(awayTeam);
+
+        double homeAttack = homeRating.map(TeamXgRating::avgXgFor)
+            .orElseGet(() -> getAttackRating(teamNameResolver.normalizeTeamName(homeTeam)));
+        double awayDefense = awayRating.map(TeamXgRating::avgXgAgainst)
+            .orElseGet(() -> getDefenseRating(teamNameResolver.normalizeTeamName(awayTeam)));
 
         double xg = (homeAttack * 0.6) + ((2.0 - awayDefense) * 0.4);
         return Math.round(xg * 100.0) / 100.0;
     }
 
     public double calculateAwayXG(String homeTeam, String awayTeam) {
-        String homeKey = normalizeTeamName(homeTeam);
-        String awayKey = normalizeTeamName(awayTeam);
+        Optional<TeamXgRating> homeRating = understatXgProvider.getRating(homeTeam);
+        Optional<TeamXgRating> awayRating = understatXgProvider.getRating(awayTeam);
 
-        double awayAttack = getAttackRating(awayKey);
-        double homeDefense = getDefenseRating(homeKey);
+        double awayAttack = awayRating.map(TeamXgRating::avgXgFor)
+            .orElseGet(() -> getAttackRating(teamNameResolver.normalizeTeamName(awayTeam)));
+        double homeDefense = homeRating.map(TeamXgRating::avgXgAgainst)
+            .orElseGet(() -> getDefenseRating(teamNameResolver.normalizeTeamName(homeTeam)));
 
         double xg = (awayAttack * 0.6) + ((2.0 - homeDefense) * 0.4);
         return Math.round(xg * 100.0) / 100.0;
+    }
+
+    /**
+     * True only when both teams have live Understat-derived ratings available,
+     * i.e. the xG figures used were computed from real shot data rather than
+     * the static fallback table. Callers can use this to flag which markets
+     * were evaluated with real data vs. a rough static prior.
+     */
+    public boolean hasLiveDataFor(String homeTeam, String awayTeam) {
+        return understatXgProvider.getRating(homeTeam).isPresent()
+            && understatXgProvider.getRating(awayTeam).isPresent();
+    }
+
+    /**
+     * Returns the canonical Kalshi ticker code (e.g. "MUN", "FUL") for a team name.
+     */
+    public String getTeamCode(String teamName) {
+        return teamNameResolver.getTeamCode(teamName);
     }
 
     // Helper to safely parse teams from Kalshi market titles or tickers
@@ -112,65 +149,5 @@ public class XgService {
             case "ipswich town": return 1.50;
             default: return 1.25;
         }
-    }
-
-    /**
-     * Returns the canonical Kalshi ticker code (e.g. "MUN", "FUL") for a team name.
-     * Used to match ticker suffixes exactly instead of via substring heuristics,
-     * which avoids false matches when one team's name/code is a substring of another's.
-     */
-    public String getTeamCode(String teamName) {
-        String key = normalizeTeamName(teamName);
-        switch (key) {
-            case "manchester united": return "MUN";
-            case "manchester city": return "MCI";
-            case "arsenal": return "ARS";
-            case "chelsea": return "CHE";
-            case "liverpool": return "LIV";
-            case "tottenham": return "TOT";
-            case "newcastle": return "NEW";
-            case "aston villa": return "AVL";
-            case "brighton": return "BRI";
-            case "crystal palace": return "CRY";
-            case "fulham": return "FUL";
-            case "brentford": return "BRE";
-            case "bournemouth": return "BOU";
-            case "everton": return "EVE";
-            case "nottingham forest": return "NFO";
-            case "sunderland": return "SUN";
-            case "leeds united": return "LEE";
-            case "hull city": return "HUL";
-            case "coventry": return "COV";
-            case "ipswich town": return "IPS";
-            default: return "";
-        }
-    }
-
-    private String normalizeTeamName(String name) {
-        if (name == null) return "";
-        String cleaned = name.toLowerCase().trim();
-
-        if (cleaned.equals("mun") || cleaned.equals("man utd") || cleaned.equals("manchester united")) return "manchester united";
-        if (cleaned.equals("mci") || cleaned.equals("man city") || cleaned.equals("manchester city")) return "manchester city";
-        if (cleaned.equals("ars") || cleaned.equals("arsenal")) return "arsenal";
-        if (cleaned.equals("che") || cleaned.equals("cfc") || cleaned.equals("chelsea")) return "chelsea";
-        if (cleaned.equals("liv") || cleaned.equals("lfc") || cleaned.equals("liverpool")) return "liverpool";
-        if (cleaned.equals("tot") || cleaned.equals("tottenham")) return "tottenham";
-        if (cleaned.equals("new") || cleaned.equals("newcastle")) return "newcastle";
-        if (cleaned.equals("avl") || cleaned.equals("aston villa")) return "aston villa";
-        if (cleaned.equals("bri") || cleaned.equals("brighton")) return "brighton";
-        if (cleaned.equals("cry") || cleaned.equals("crystal palace")) return "crystal palace";
-        if (cleaned.equals("ful") || cleaned.equals("fulham")) return "fulham";
-        if (cleaned.equals("bre") || cleaned.equals("brentford")) return "brentford";
-        if (cleaned.equals("bou") || cleaned.equals("bournemouth")) return "bournemouth";
-        if (cleaned.equals("eve") || cleaned.equals("everton")) return "everton";
-        if (cleaned.equals("nfo") || cleaned.equals("nottingham forest")) return "nottingham forest";
-        if (cleaned.equals("sun") || cleaned.equals("sunderland")) return "sunderland";
-        if (cleaned.equals("lee") || cleaned.equals("leeds united")) return "leeds united";
-        if (cleaned.equals("hul") || cleaned.equals("hull city")) return "hull city";
-        if (cleaned.equals("cov") || cleaned.equals("coventry")) return "coventry";
-        if (cleaned.equals("ips") || cleaned.equals("ipswich town")) return "ipswich town";
-
-        return cleaned;
     }
 }

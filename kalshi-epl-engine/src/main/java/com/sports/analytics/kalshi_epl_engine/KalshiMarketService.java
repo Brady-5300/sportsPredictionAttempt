@@ -68,7 +68,14 @@ public class KalshiMarketService {
                     }
 
                     double marketProb = priceCents / 100.0;
-                    double edge = modelProb - marketProb;
+
+                    // Kalshi charges a trading fee on entry (settlement itself is free),
+                    // so a real trade needs to clear the market's implied probability by
+                    // more than the raw model edge suggests.
+                    int entryFeeCents = poissonModel.calculateKalshiFeeCents(priceCents);
+                    double entryFeeProb = entryFeeCents / 100.0;
+
+                    double edge = modelProb - marketProb - entryFeeProb;
 
                     double kellyWager = poissonModel.calculateKellyWagerPercent(modelProb, priceCents);
 
@@ -86,6 +93,7 @@ public class KalshiMarketService {
                     }
 
                     String ticker = market.getTicker() == null ? "N/A" : market.getTicker();
+                    String xgDataSource = xgService.hasLiveDataFor(homeTeam, awayTeam) ? "understat-live" : "static-fallback";
 
                     results.add(new MarketEvaluation(
                         ticker,
@@ -95,7 +103,8 @@ public class KalshiMarketService {
                         marketStr,
                         edgeStr,
                         rec,
-                        kellyWager
+                        kellyWager,
+                        xgDataSource
                     ));
                 }
             }
