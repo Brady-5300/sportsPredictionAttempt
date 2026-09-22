@@ -32,4 +32,13 @@ class UnderstatScraperLiveSmokeTest {
         assertFalse(shots.get("h").isEmpty(), "expected home shots from live Understat data");
         System.out.println("Home shots: " + shots.get("h").size() + ", Away shots: " + shots.get("a").size());
     }
+
+    @Test
+    void fetchesRealMatchRosters() {
+        UnderstatMatchDetails details = scraper.fetchMatchDetails("26604");
+        assertFalse(details.rosters().get("h").isEmpty(), "expected home roster from live Understat data");
+        UnderstatPlayerMatchStat firstPlayer = details.rosters().get("h").get(0);
+        System.out.println("First home player: " + firstPlayer.getPlayer() + ", minutes=" + firstPlayer.minutesPlayed()
+            + ", position=" + firstPlayer.getPosition());
+    }
 }

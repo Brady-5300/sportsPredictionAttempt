@@ -3,6 +3,7 @@ package com.sports.analytics.kalshi_epl_engine;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -54,8 +55,12 @@ public class KalshiMarketService {
                     String homeTeam = teams.getKey().replaceAll("(?i)\\s+(wins|is the result)$", "").trim();
                     String awayTeam = teams.getValue().replaceAll("(?i)\\s+(wins|is the result)$", "").trim();
 
-                    double homeXG = xgService.calculateHomeXG(homeTeam, awayTeam);
-                    double awayXG = xgService.calculateAwayXG(homeTeam, awayTeam);
+                    boolean matchIsToday = tickerParserService.parseMatchDateFromTicker(market.getTicker())
+                        .map(date -> date.isEqual(LocalDate.now()))
+                        .orElse(false);
+
+                    double homeXG = xgService.calculateHomeXG(homeTeam, awayTeam, matchIsToday);
+                    double awayXG = xgService.calculateAwayXG(homeTeam, awayTeam, matchIsToday);
 
                     String marketType = resolveMarketType(market, rawTitle, homeTeam, awayTeam);
 

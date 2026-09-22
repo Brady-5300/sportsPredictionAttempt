@@ -7,6 +7,10 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -14,7 +18,15 @@ class XgServiceTest {
 
     private final TeamNameResolver resolver = new TeamNameResolver();
     private final UnderstatXgProvider provider = mock(UnderstatXgProvider.class);
-    private final XgService xgService = new XgService(resolver, provider);
+    private final LineupFormAdjustmentService adjuster = mock(LineupFormAdjustmentService.class);
+    private final XgService xgService = new XgService(resolver, provider, adjuster);
+
+    XgServiceTest() {
+        // Pass the base rating through unchanged by default, so existing arithmetic
+        // assertions (written before the adjustment layer existed) still hold; tests
+        // that specifically want to exercise the adjustment stub it explicitly.
+        when(adjuster.adjust(anyString(), any(), anyBoolean())).thenAnswer(inv -> inv.getArgument(1));
+    }
 
     @Test
     void usesLiveRatingsWhenBothTeamsHaveThem() {
@@ -53,5 +65,21 @@ class XgServiceTest {
     @Test
     void teamCodeDelegatesToResolver() {
         assertEquals("ARS", xgService.getTeamCode("Arsenal"));
+    }
+
+    @Test
+    void usesLineupFormAdjustedRatingRatherThanRawBaseRating() {
+        when(provider.getRating("Arsenal")).thenReturn(Optional.of(new TeamXgRating(2.0, 1.0, 6)));
+        when(provider.getRating("Fulham")).thenReturn(Optional.of(new TeamXgRating(1.0, 1.0, 6)));
+
+        // Simulate the adjuster boosting Arsenal's attack (e.g. a missing opposing defender elsewhere).
+        when(adjuster.adjust(eq("Arsenal"), eq(new TeamXgRating(2.0, 1.0, 6)), anyBoolean()))
+            .thenReturn(new TeamXgRating(3.0, 1.0, 6));
+
+        double homeXg = xgService.calculateHomeXG("Arsenal", "Fulham");
+
+        // homeXG should reflect the ADJUSTED attack (3.0), not the raw base (2.0):
+        // 3.0*0.6 + (2.0 - 1.0)*0.4 = 1.8 + 0.4 = 2.2
+        assertEquals(2.2, homeXg, 0.001);
     }
 }

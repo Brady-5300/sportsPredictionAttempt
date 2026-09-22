@@ -7,12 +7,17 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 class KalshiMarketServiceTest {
 
     private final TeamNameResolver teamNameResolver = new TeamNameResolver();
+    private final UnderstatXgProvider understatXgProvider =
+        new UnderstatXgProvider(new UnderstatScraperService(), new ShotXgCalculator(), teamNameResolver);
+    private final ApiFootballClient apiFootballClient =
+        new ApiFootballClient("", "https://free-api-live-football-data.p.rapidapi.com", new org.springframework.web.client.RestTemplate());
     private final KalshiMarketService service = new KalshiMarketService(
         new PoissonModel(),
         new TickerParserService(),
         new XgService(
             teamNameResolver,
-            new UnderstatXgProvider(new UnderstatScraperService(), new ShotXgCalculator(), teamNameResolver)
+            understatXgProvider,
+            new LineupFormAdjustmentService(apiFootballClient, understatXgProvider)
         )
     );
 

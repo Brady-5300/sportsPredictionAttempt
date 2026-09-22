@@ -64,6 +64,22 @@ public class UnderstatScraperService {
         }
     }
 
+    /**
+     * Fetches both shots and player rosters (minutes played, position) for a match
+     * in a single request - use this instead of {@link #fetchMatchShots} when you
+     * also need per-player minutes, to avoid hitting the endpoint twice.
+     */
+    public UnderstatMatchDetails fetchMatchDetails(String matchId) {
+        String url = BASE_URL + "/getMatchData/" + matchId;
+        try {
+            String json = getAsAjax(url);
+            return new UnderstatMatchDetails(parseMatchShots(json), parseMatchRosters(json));
+        } catch (Exception e) {
+            System.err.println("[UNDERSTAT] Failed to fetch match details for " + matchId + ": " + e.getMessage());
+            return UnderstatMatchDetails.empty();
+        }
+    }
+
     List<UnderstatTeamMatch> parseTeamMatches(String json) {
         if (json == null) return new ArrayList<>();
         JsonNode root = objectMapper.readTree(json);
@@ -98,6 +114,33 @@ public class UnderstatScraperService {
         }
 
         return Map.of("h", home, "a", away);
+    }
+
+    /**
+     * Rosters are keyed by player id ("h":{"666295":{...},"666296":{...}}), not arrays.
+     */
+    Map<String, List<UnderstatPlayerMatchStat>> parseMatchRosters(String json) {
+        Map<String, List<UnderstatPlayerMatchStat>> empty = Map.of("h", new ArrayList<>(), "a", new ArrayList<>());
+        if (json == null) return empty;
+
+        JsonNode root = objectMapper.readTree(json);
+        JsonNode rosters = root.get("rosters");
+        if (rosters == null) return empty;
+
+        return Map.of(
+            "h", parseRosterSide(rosters.get("h")),
+            "a", parseRosterSide(rosters.get("a"))
+        );
+    }
+
+    private List<UnderstatPlayerMatchStat> parseRosterSide(JsonNode sideNode) {
+        List<UnderstatPlayerMatchStat> result = new ArrayList<>();
+        if (sideNode == null || !sideNode.isObject()) return result;
+
+        sideNode.propertyStream().forEach(entry ->
+            result.add(objectMapper.treeToValue(entry.getValue(), UnderstatPlayerMatchStat.class))
+        );
+        return result;
     }
 
     /**

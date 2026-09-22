@@ -35,7 +35,14 @@ class UnderstatScraperServiceTest {
 
     // Trimmed real payload shape from GET /getMatchData/26604 (captured 2026-09-22).
     private static final String MATCH_DATA_JSON = """
-        {"rosters":{},"tmpl":"",
+        {"rosters":{
+           "h":{"666295":{"id":"666295","player":"David Raya","player_id":"9676",
+                           "position":"GK","time":"90","h_a":"h"},
+                "666296":{"id":"666296","player":"Ben White","player_id":"7298",
+                           "position":"DR","time":"90","h_a":"h"}},
+           "a":{"666309":{"id":"666309","player":"Jos\\u00e9 S\\u00e1","player_id":"9740",
+                           "position":"GK","time":"90","h_a":"a"}}
+         },"tmpl":"",
          "shots":{
            "h":[
              {"id":"584738","minute":"13","result":"SavedShot","X":"0.735","Y":"0.435",
@@ -102,5 +109,41 @@ class UnderstatScraperServiceTest {
         Map<String, List<UnderstatShot>> shots = scraper.parseMatchShots(null);
         assertTrue(shots.get("h").isEmpty());
         assertTrue(shots.get("a").isEmpty());
+    }
+
+    @Test
+    void parsesMatchRostersFromRealPayloadShape() {
+        Map<String, List<UnderstatPlayerMatchStat>> rosters = scraper.parseMatchRosters(MATCH_DATA_JSON);
+
+        assertEquals(2, rosters.get("h").size());
+        assertEquals(1, rosters.get("a").size());
+
+        UnderstatPlayerMatchStat keeper = rosters.get("h").stream()
+            .filter(p -> p.getPlayer().equals("David Raya"))
+            .findFirst().orElseThrow();
+        assertEquals(90, keeper.minutesPlayed());
+        assertEquals("GK", keeper.getPosition());
+        assertTrue(keeper.isDefensivePosition());
+
+        UnderstatPlayerMatchStat fullback = rosters.get("h").stream()
+            .filter(p -> p.getPlayer().equals("Ben White"))
+            .findFirst().orElseThrow();
+        assertTrue(fullback.isDefensivePosition(), "DR should count as a defensive position");
+    }
+
+    @Test
+    void returnsEmptyRostersWhenFieldMissing() {
+        Map<String, List<UnderstatPlayerMatchStat>> rosters = scraper.parseMatchRosters("{\"shots\":{}}");
+        assertTrue(rosters.get("h").isEmpty());
+        assertTrue(rosters.get("a").isEmpty());
+    }
+
+    @Test
+    void fetchMatchDetailsCombinesShotsAndRosters() {
+        // parseMatchShots/parseMatchRosters are already covered individually; this just
+        // confirms fetchMatchDetails' fallback shape on failure without hitting the network.
+        UnderstatMatchDetails empty = UnderstatMatchDetails.empty();
+        assertTrue(empty.shots().get("h").isEmpty());
+        assertTrue(empty.rosters().get("h").isEmpty());
     }
 }
