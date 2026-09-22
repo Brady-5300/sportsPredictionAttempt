@@ -17,10 +17,10 @@ class XgServiceLiveSmokeTest {
     private final UnderstatScraperService scraper = new UnderstatScraperService();
     private final ShotXgCalculator calculator = new ShotXgCalculator();
     private final UnderstatXgProvider provider = new UnderstatXgProvider(scraper, calculator, resolver);
-    private final ApiFootballClient apiFootballClient = new ApiFootballClient(
-        System.getenv("API_FOOTBALL_KEY"), "https://free-api-live-football-data.p.rapidapi.com", new org.springframework.web.client.RestTemplate());
+    private final FotMobClient fotMobClient =
+        new FotMobClient("https://www.fotmob.com", new org.springframework.web.client.RestTemplate());
     private final LineupFormAdjustmentService lineupFormAdjustmentService =
-        new LineupFormAdjustmentService(apiFootballClient, provider);
+        new LineupFormAdjustmentService(fotMobClient, provider);
     private final XgService xgService = new XgService(resolver, provider, lineupFormAdjustmentService);
 
     @Test

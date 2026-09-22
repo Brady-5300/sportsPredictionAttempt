@@ -2,6 +2,7 @@ package com.sports.analytics.kalshi_epl_engine;
 
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDate;
 import java.util.Optional;
 
 @Service
@@ -26,18 +27,18 @@ public class XgService {
      * table for whichever side has no live Understat data at all.
      */
     public double calculateHomeXG(String homeTeam, String awayTeam) {
-        return calculateHomeXG(homeTeam, awayTeam, false);
+        return calculateHomeXG(homeTeam, awayTeam, Optional.empty());
     }
 
     /**
-     * @param matchIsToday whether this fixture kicks off today - passed through to
-     *                     LineupFormAdjustmentService so it refreshes injury data more
-     *                     aggressively right before kickoff, and stays on the long cache
-     *                     otherwise (its free tier is capped at 100 requests/month).
+     * @param matchDate this fixture's kickoff date, if known - when it's today,
+     *                   LineupFormAdjustmentService will try to use the confirmed
+     *                   starting XI (falling back to injury flags if not posted
+     *                   yet) instead of just the long-cached injury-flag check.
      */
-    public double calculateHomeXG(String homeTeam, String awayTeam, boolean matchIsToday) {
-        Optional<TeamXgRating> homeRating = liveRatingFor(homeTeam, matchIsToday);
-        Optional<TeamXgRating> awayRating = liveRatingFor(awayTeam, matchIsToday);
+    public double calculateHomeXG(String homeTeam, String awayTeam, Optional<LocalDate> matchDate) {
+        Optional<TeamXgRating> homeRating = liveRatingFor(homeTeam, awayTeam, true, matchDate);
+        Optional<TeamXgRating> awayRating = liveRatingFor(awayTeam, homeTeam, false, matchDate);
 
         double homeAttack = homeRating.map(TeamXgRating::avgXgFor)
             .orElseGet(() -> getAttackRating(teamNameResolver.normalizeTeamName(homeTeam)));
@@ -49,12 +50,12 @@ public class XgService {
     }
 
     public double calculateAwayXG(String homeTeam, String awayTeam) {
-        return calculateAwayXG(homeTeam, awayTeam, false);
+        return calculateAwayXG(homeTeam, awayTeam, Optional.empty());
     }
 
-    public double calculateAwayXG(String homeTeam, String awayTeam, boolean matchIsToday) {
-        Optional<TeamXgRating> homeRating = liveRatingFor(homeTeam, matchIsToday);
-        Optional<TeamXgRating> awayRating = liveRatingFor(awayTeam, matchIsToday);
+    public double calculateAwayXG(String homeTeam, String awayTeam, Optional<LocalDate> matchDate) {
+        Optional<TeamXgRating> homeRating = liveRatingFor(homeTeam, awayTeam, true, matchDate);
+        Optional<TeamXgRating> awayRating = liveRatingFor(awayTeam, homeTeam, false, matchDate);
 
         double awayAttack = awayRating.map(TeamXgRating::avgXgFor)
             .orElseGet(() -> getAttackRating(teamNameResolver.normalizeTeamName(awayTeam)));
@@ -70,9 +71,15 @@ public class XgService {
      * data is available for this team (passes the base rating through
      * unchanged otherwise - see LineupFormAdjustmentService).
      */
-    private Optional<TeamXgRating> liveRatingFor(String teamName, boolean matchIsToday) {
+    private Optional<TeamXgRating> liveRatingFor(String teamName, String opponentName, boolean isHomeSide,
+                                                  Optional<LocalDate> matchDate) {
         return understatXgProvider.getRating(teamName)
-            .map(base -> lineupFormAdjustmentService.adjust(teamName, base, matchIsToday));
+            .map(base -> {
+                LineupFormAdjustmentService.MatchContext context = matchDate
+                    .map(date -> new LineupFormAdjustmentService.MatchContext(opponentName, isHomeSide, date))
+                    .orElse(null);
+                return lineupFormAdjustmentService.adjust(teamName, base, context);
+            });
     }
 
     /**

@@ -7,6 +7,7 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 @Service
 public class KalshiMarketService {
@@ -55,12 +56,10 @@ public class KalshiMarketService {
                     String homeTeam = teams.getKey().replaceAll("(?i)\\s+(wins|is the result)$", "").trim();
                     String awayTeam = teams.getValue().replaceAll("(?i)\\s+(wins|is the result)$", "").trim();
 
-                    boolean matchIsToday = tickerParserService.parseMatchDateFromTicker(market.getTicker())
-                        .map(date -> date.isEqual(LocalDate.now()))
-                        .orElse(false);
+                    Optional<LocalDate> matchDate = tickerParserService.parseMatchDateFromTicker(market.getTicker());
 
-                    double homeXG = xgService.calculateHomeXG(homeTeam, awayTeam, matchIsToday);
-                    double awayXG = xgService.calculateAwayXG(homeTeam, awayTeam, matchIsToday);
+                    double homeXG = xgService.calculateHomeXG(homeTeam, awayTeam, matchDate);
+                    double awayXG = xgService.calculateAwayXG(homeTeam, awayTeam, matchDate);
 
                     String marketType = resolveMarketType(market, rawTitle, homeTeam, awayTeam);
 

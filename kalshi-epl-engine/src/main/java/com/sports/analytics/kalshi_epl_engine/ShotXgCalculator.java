@@ -6,10 +6,18 @@ import org.springframework.stereotype.Service;
  * Computes our own expected-goals value per shot from its pitch geometry,
  * instead of trusting Understat's precomputed xG number.
  *
- * This is a hand-tuned logistic model on distance-to-goal and shot angle,
- * with fixed adjustments for shot type and situation. It has NOT been fit
- * against real outcome data - it is a reasonable first-pass heuristic and
- * should eventually be calibrated (see backtesting item in the roadmap).
+ * A logistic regression on distance/angle/situation/shot-type, fit via
+ * {@link LogisticRegressionTrainer} against 6,040 real shots from 248 EPL
+ * matches (2025/26 season, 8 teams spanning a mix of styles/quality - see
+ * XgModelCalibrationTest, which reproduces this fit). Calibration ratio
+ * (predicted vs. actual total goals) was 1.02 and log-loss was 0.284 on the
+ * training set - both in line with published xG models. Most fitted signs
+ * confirmed the original hand-picked priors (distance/angle/corner/header
+ * all pointed the same direction); direct free-kicks and fast-breaks came
+ * out close to zero/slightly positive after controlling for distance and
+ * angle, which the original guesses had gotten backwards - the fit is
+ * trusted over that prior guess. Recalibrate periodically as more of the
+ * season accumulates by rerunning XgModelCalibrationTest.
  */
 @Service
 public class ShotXgCalculator {
@@ -23,9 +31,9 @@ public class ShotXgCalculator {
         double distance = distanceToGoalCenterMeters(shot.parsedX(), shot.parsedY());
         double angle = shotAngleRadians(shot.parsedX(), shot.parsedY());
 
-        double logit = -1.0
-            - 0.10 * distance
-            + 2.20 * angle;
+        double logit = -0.339367
+            - 0.133580 * distance
+            + 0.556656 * angle;
 
         logit += situationAdjustment(shot.getSituation());
         logit += shotTypeAdjustment(shot.getShotType());
@@ -81,10 +89,10 @@ public class ShotXgCalculator {
         if (situation == null) return 0.0;
         switch (situation) {
             case "OpenPlay": return 0.0;
-            case "FromCorner": return -0.20;
-            case "SetPiece": return -0.10;
-            case "DirectFreekick": return -0.60;
-            case "FastBreak": return 0.30;
+            case "FromCorner": return -0.457747;
+            case "SetPiece": return -0.319831;
+            case "DirectFreekick": return 0.104003;
+            case "FastBreak": return 0.0;
             default: return 0.0;
         }
     }
@@ -94,8 +102,8 @@ public class ShotXgCalculator {
         switch (shotType) {
             case "RightFoot": return 0.0;
             case "LeftFoot": return 0.0;
-            case "Head": return -0.45;
-            case "OtherBodyPart": return -0.70;
+            case "Head": return -0.804604;
+            case "OtherBodyPart": return -0.048498;
             default: return 0.0;
         }
     }

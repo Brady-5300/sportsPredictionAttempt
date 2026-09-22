@@ -8,7 +8,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -25,7 +24,7 @@ class XgServiceTest {
         // Pass the base rating through unchanged by default, so existing arithmetic
         // assertions (written before the adjustment layer existed) still hold; tests
         // that specifically want to exercise the adjustment stub it explicitly.
-        when(adjuster.adjust(anyString(), any(), anyBoolean())).thenAnswer(inv -> inv.getArgument(1));
+        when(adjuster.adjust(anyString(), any(), any())).thenAnswer(inv -> inv.getArgument(1));
     }
 
     @Test
@@ -73,7 +72,7 @@ class XgServiceTest {
         when(provider.getRating("Fulham")).thenReturn(Optional.of(new TeamXgRating(1.0, 1.0, 6)));
 
         // Simulate the adjuster boosting Arsenal's attack (e.g. a missing opposing defender elsewhere).
-        when(adjuster.adjust(eq("Arsenal"), eq(new TeamXgRating(2.0, 1.0, 6)), anyBoolean()))
+        when(adjuster.adjust(eq("Arsenal"), eq(new TeamXgRating(2.0, 1.0, 6)), any()))
             .thenReturn(new TeamXgRating(3.0, 1.0, 6));
 
         double homeXg = xgService.calculateHomeXG("Arsenal", "Fulham");
