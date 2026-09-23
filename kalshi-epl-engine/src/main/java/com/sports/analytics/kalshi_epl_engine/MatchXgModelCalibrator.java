@@ -6,10 +6,9 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Offline tool to calibrate XgService's match-level xG formula - previously a
- * hand-picked linear blend (attack*0.6 + (2-defense)*0.4) with no home-field
- * term at all - against real Understat results. Fits a Poisson regression
- * (log-link) on (own attack rating, opponent defense rating, home/away) ->
+ * Offline tool to calibrate XgService's match-level xG formula against real
+ * Understat results. Fits a Poisson regression (log-link) on
+ * (log own attack rating, log opponent defense rating, home/away) ->
  * actual goals scored, using the SAME point-in-time rating logic as the live
  * app (UnderstatXgProvider.getRatingAsOf) so the fit reflects exactly what the
  * live model would have known before each match, not lookahead-biased data.
@@ -20,7 +19,7 @@ import java.util.Optional;
  */
 public class MatchXgModelCalibrator {
 
-    /** Feature order: [bias, ownAttack, opponentDefense, isHome]. */
+    /** Feature order: [bias, log(ownAttack), log(opponentDefense), isHome]. */
     public static final int FEATURE_COUNT = 4;
 
     private final UnderstatScraperService scraper;
@@ -75,7 +74,12 @@ public class MatchXgModelCalibrator {
                 }
 
                 boolean isHome = "h".equals(match.getSide());
-                double[] features = {1.0, ownRating.get().avgXgFor(), opponentRating.get().avgXgAgainst(), isHome ? 1.0 : 0.0};
+                double[] features = {
+                    1.0,
+                    Math.log(Math.max(ownRating.get().avgXgFor(), 0.05)),
+                    Math.log(Math.max(opponentRating.get().avgXgAgainst(), 0.05)),
+                    isHome ? 1.0 : 0.0
+                };
                 examples.add(new PoissonRegressionTrainer.Example(features, ownGoals));
                 matchesUsed++;
             }

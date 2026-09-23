@@ -30,18 +30,18 @@ class PoissonRegressionTrainerTest {
             examples.add(new PoissonRegressionTrainer.Example(new double[]{1.0, x1, x2}, sampledCount));
         }
 
-        PoissonRegressionTrainer trainer = new PoissonRegressionTrainer(0.05, 2000, 0.0001);
+        PoissonRegressionTrainer trainer = new PoissonRegressionTrainer(50, 0.0001);
         PoissonRegressionTrainer.TrainingResult result = trainer.fit(examples);
 
-        assertEquals(trueBias, result.weights()[0], 0.15);
-        assertEquals(trueW1, result.weights()[1], 0.15);
-        assertEquals(trueW2, result.weights()[2], 0.15);
+        assertEquals(trueBias, result.weights()[0], 0.05);
+        assertEquals(trueW1, result.weights()[1], 0.05);
+        assertEquals(trueW2, result.weights()[2], 0.05);
     }
 
     @Test
     void predictedRateIsAlwaysPositive() {
         double[] weights = {-5.0, 3.0}; // even with a very negative bias
-        PoissonRegressionTrainer trainer = new PoissonRegressionTrainer(0.01, 1, 0.0);
+        PoissonRegressionTrainer trainer = new PoissonRegressionTrainer(1, 0.0);
         double predicted = trainer.predict(weights, new double[]{1.0, -10.0});
         assertTrue(predicted > 0);
     }
@@ -53,8 +53,8 @@ class PoissonRegressionTrainerTest {
             new PoissonRegressionTrainer.Example(new double[]{1.0, -1.0}, 0.5)
         );
 
-        PoissonRegressionTrainer.TrainingResult few = new PoissonRegressionTrainer(0.05, 3, 0.001).fit(examples);
-        PoissonRegressionTrainer.TrainingResult many = new PoissonRegressionTrainer(0.05, 500, 0.001).fit(examples);
+        PoissonRegressionTrainer.TrainingResult few = new PoissonRegressionTrainer(1, 0.001).fit(examples);
+        PoissonRegressionTrainer.TrainingResult many = new PoissonRegressionTrainer(50, 0.001).fit(examples);
 
         assertTrue(many.finalDeviance() < few.finalDeviance(),
             "more iterations (" + many.finalDeviance() + ") should fit better than few (" + few.finalDeviance() + ")");
@@ -70,7 +70,7 @@ class PoissonRegressionTrainerTest {
             examples.add(new PoissonRegressionTrainer.Example(new double[]{1.0, x}, samplePoisson(trueLambda, random)));
         }
 
-        PoissonRegressionTrainer trainer = new PoissonRegressionTrainer(0.05, 1000, 0.0001);
+        PoissonRegressionTrainer trainer = new PoissonRegressionTrainer(50, 0.0001);
         PoissonRegressionTrainer.TrainingResult result = trainer.fit(examples);
 
         double rateAtLowX = trainer.predict(result.weights(), new double[]{1.0, -1.0});

@@ -11,6 +11,8 @@ import tools.jackson.databind.ObjectMapper;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -47,6 +49,14 @@ public class UnderstatScraperService {
     // transient failure must not get permanently remembered as "no data".
     private final ConcurrentHashMap<String, UnderstatMatchDetails> matchDetailsCache = new ConcurrentHashMap<>();
 
+    // Fixture lists change (results come in), so only cache briefly - long
+    // enough that a validation run asking about the same team/season hundreds
+    // of times doesn't re-download it every time.
+    private static final long TEAM_MATCHES_TTL_SECONDS = 10 * 60;
+    private record CachedTeamMatches(List<UnderstatTeamMatch> matches, Instant fetchedAt) {
+    }
+    private final ConcurrentHashMap<String, CachedTeamMatches> teamMatchesCache = new ConcurrentHashMap<>();
+
     public UnderstatScraperService(ScraperHealthMonitor healthMonitor) {
         this.healthMonitor = healthMonitor;
     }
@@ -56,11 +66,18 @@ public class UnderstatScraperService {
      * season by its starting year, e.g. 2025 for the 2025/26 season).
      */
     public List<UnderstatTeamMatch> fetchTeamMatches(String understatTeamSlug, int season) {
+        String cacheKey = understatTeamSlug + "/" + season;
+        CachedTeamMatches cached = teamMatchesCache.get(cacheKey);
+        if (cached != null && Duration.between(cached.fetchedAt(), Instant.now()).getSeconds() < TEAM_MATCHES_TTL_SECONDS) {
+            return cached.matches();
+        }
+
         String url = BASE_URL + "/getTeamData/" + understatTeamSlug + "/" + season;
         try {
             String json = getAsAjax(url);
-            List<UnderstatTeamMatch> result = parseTeamMatches(json);
+            List<UnderstatTeamMatch> result = List.copyOf(parseTeamMatches(json));
             healthMonitor.recordSuccess(SOURCE);
+            teamMatchesCache.put(cacheKey, new CachedTeamMatches(result, Instant.now()));
             return result;
         } catch (Exception e) {
             System.err.println("[UNDERSTAT] Failed to fetch team matches for " + understatTeamSlug + ": " + e.getMessage());

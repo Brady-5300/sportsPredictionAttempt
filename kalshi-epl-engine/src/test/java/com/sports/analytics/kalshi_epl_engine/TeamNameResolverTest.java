@@ -27,4 +27,21 @@ class TeamNameResolverTest {
         assertEquals("FUL", resolver.getTeamCode("ful"));
         assertEquals("Fulham", resolver.getUnderstatSlug("ful"));
     }
+
+    @Test
+    void usesKalshisOwnTickerCodes() {
+        assertEquals("CFC", resolver.getTeamCode("Chelsea"));
+        assertEquals("LFC", resolver.getTeamCode("Liverpool"));
+    }
+
+    @Test
+    void resolvesNamesAsKalshiAndUnderstatActuallyWriteThem() {
+        assertEquals("Nottingham_Forest", resolver.getUnderstatSlug("Nottingham"));
+        assertEquals("Hull", resolver.getUnderstatSlug("Hull City"));
+        assertEquals("Ipswich", resolver.getUnderstatSlug("Ipswich Town"));
+        assertEquals("Coventry", resolver.getUnderstatSlug("Coventry"));
+        assertEquals("Wolverhampton_Wanderers", resolver.getUnderstatSlug("Wolverhampton"));
+        assertEquals("Newcastle_United", resolver.getUnderstatSlug("Newcastle United"));
+        assertEquals("Leeds", resolver.getUnderstatSlug("Leeds"));
+    }
 }

@@ -2,7 +2,11 @@ package com.sports.analytics.kalshi_epl_engine;
 
 import org.junit.jupiter.api.Test;
 
+import java.time.Instant;
+import java.util.Optional;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class KalshiMarketTest {
 
@@ -59,5 +63,33 @@ class KalshiMarketTest {
         market.setYesBid(41);
 
         assertEquals(41, market.resolvePriceCents());
+    }
+
+    @Test
+    void estimatesKickoffAsThreeHoursBeforeOccurrenceTime() {
+        // Real example: Fulham vs Man Utd kicked off 15:30 UTC; Kalshi's occurrence_datetime was 18:30.
+        KalshiMarket market = new KalshiMarket();
+        market.setOccurrenceDatetime("2026-09-20T18:30:00Z");
+
+        assertEquals(Optional.of(Instant.parse("2026-09-20T15:30:00Z")), market.estimatedKickoff());
+    }
+
+    @Test
+    void kickoffIsEmptyWhenOccurrenceTimeMissingOrUnparseable() {
+        KalshiMarket market = new KalshiMarket();
+        assertTrue(market.estimatedKickoff().isEmpty());
+
+        market.setOccurrenceDatetime("not-a-date");
+        assertTrue(market.estimatedKickoff().isEmpty());
+    }
+
+    @Test
+    void readsBidAndAskInCents() {
+        KalshiMarket market = new KalshiMarket();
+        market.setYesBidDollars("0.4700");
+        market.setYesAskDollars("0.4900");
+
+        assertEquals(Optional.of(47), market.yesBidCents());
+        assertEquals(Optional.of(49), market.yesAskCents());
     }
 }

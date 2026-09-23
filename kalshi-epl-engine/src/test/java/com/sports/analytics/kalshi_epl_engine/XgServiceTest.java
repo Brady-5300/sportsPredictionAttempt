@@ -32,11 +32,11 @@ class XgServiceTest {
         when(provider.getRating("Arsenal")).thenReturn(Optional.of(new TeamXgRating(2.2, 0.9, 6)));
         when(provider.getRating("Fulham")).thenReturn(Optional.of(new TeamXgRating(1.1, 1.6, 6)));
 
-        // homeXG = exp(-0.132558 + 0.131990*2.2 + 0.100313*1.6 + 0.249464*1) ≈ 1.76
+        // homeXG = exp(-0.427766 + 1.040119*ln(2.2) + 0.851259*ln(1.6) + 0.175887) ≈ 2.63
         // (see XgService.combineAttackDefense - the fitted Poisson regression formula)
         Optional<Double> homeXg = xgService.calculateHomeXG("Arsenal", "Fulham");
         assertTrue(homeXg.isPresent());
-        assertEquals(1.76, homeXg.get(), 0.01);
+        assertEquals(2.63, homeXg.get(), 0.01);
 
         assertTrue(xgService.hasLiveDataFor("Arsenal", "Fulham"));
     }
@@ -66,10 +66,10 @@ class XgServiceTest {
         when(provider.getRating("Arsenal")).thenReturn(Optional.of(new TeamXgRating(2.2, 0.9, 6)));
         when(provider.getRating("Fulham")).thenReturn(Optional.of(new TeamXgRating(1.1, 1.6, 6)));
 
-        // awayXG = exp(-0.132558 + 0.131990*1.1 + 0.100313*0.9 + 0.249464*0) ≈ 1.11
+        // awayXG = exp(-0.427766 + 1.040119*ln(1.1) + 0.851259*ln(0.9)) ≈ 0.66
         Optional<Double> awayXg = xgService.calculateAwayXG("Arsenal", "Fulham");
         assertTrue(awayXg.isPresent());
-        assertEquals(1.11, awayXg.get(), 0.01);
+        assertEquals(0.66, awayXg.get(), 0.01);
     }
 
     @Test
@@ -100,9 +100,9 @@ class XgServiceTest {
         Optional<Double> homeXg = xgService.calculateHomeXG("Arsenal", "Fulham");
 
         // homeXG should reflect the ADJUSTED attack (3.0), not the raw base (2.0):
-        // exp(-0.132558 + 0.131990*3.0 + 0.100313*1.0 + 0.249464*1) ≈ 1.85
+        // exp(-0.427766 + 1.040119*ln(3.0) + 0.851259*ln(1.0) + 0.175887) ≈ 2.44
         assertTrue(homeXg.isPresent());
-        assertEquals(1.85, homeXg.get(), 0.01);
+        assertEquals(2.44, homeXg.get(), 0.01);
 
         // Sanity check the direction is still right even though the exact number changed:
         // boosting attack from 2.0 to 3.0 must increase predicted xG, not decrease it.

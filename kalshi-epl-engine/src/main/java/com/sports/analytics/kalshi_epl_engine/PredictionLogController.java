@@ -35,4 +35,16 @@ public class PredictionLogController {
     public ModelValidationReport calibration() {
         return predictionLogService.calibrationReport();
     }
+
+    /** Our Brier score vs. Kalshi's pre-kickoff price on the same resolved markets. */
+    @GetMapping("/vs-market")
+    public MarketComparison vsMarket() {
+        return predictionLogService.marketComparison();
+    }
+
+    /** Full model vs. the same model without lineup adjustments, on the same resolved markets. */
+    @GetMapping("/lineup-effect")
+    public LineupComparison lineupEffect() {
+        return predictionLogService.lineupComparison();
+    }
 }

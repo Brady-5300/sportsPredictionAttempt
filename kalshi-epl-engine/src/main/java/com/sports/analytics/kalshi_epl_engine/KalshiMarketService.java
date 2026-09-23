@@ -102,8 +102,18 @@ public class KalshiMarketService {
 
                     double modelProb = poissonModel.calculateMarketProbability(homeXG.get(), awayXG.get(), marketType);
 
-                    predictionLogService.logIfNew(ticker, fullTitle, marketType,
-                        matchDate.map(LocalDate::toString).orElse(""), modelProb);
+                    // Same model with lineup adjustments switched off, so the log can
+                    // measure whether the lineup layer helps on the exact same matches.
+                    Optional<Double> baseHomeXG = xgService.calculateHomeXG(homeTeam, awayTeam);
+                    Optional<Double> baseAwayXG = xgService.calculateAwayXG(homeTeam, awayTeam);
+                    Double baseProb = baseHomeXG.isPresent() && baseAwayXG.isPresent()
+                        ? poissonModel.calculateMarketProbability(baseHomeXG.get(), baseAwayXG.get(), marketType)
+                        : null;
+
+                    predictionLogService.recordSnapshot(ticker, fullTitle, marketType,
+                        matchDate.map(LocalDate::toString).orElse(""), modelProb, baseProb,
+                        market.yesBidCents().orElse(null), market.yesAskCents().orElse(null),
+                        market.estimatedKickoff());
 
                     int priceCents = market.resolvePriceCents();
                     // Skip if there's truly no active market pricing available

@@ -29,7 +29,7 @@ class MatchXgModelCalibrationTest {
             "Arsenal", "Manchester City", "Liverpool", "Chelsea", "Tottenham",
             "Aston Villa", "Newcastle", "Manchester United", "Brighton", "Crystal Palace",
             "Fulham", "Brentford", "Bournemouth", "Everton", "Nottingham Forest",
-            "Sunderland", "Leeds United"
+            "Sunderland", "Leeds United", "West Ham", "Wolverhampton", "Burnley"
         );
 
         System.out.println("Collecting match examples from " + teams.size() + " teams' schedules...");
@@ -38,10 +38,10 @@ class MatchXgModelCalibrationTest {
         System.out.println("Skipped (no rating available): " + dataset.matchesSkippedNoRating());
         System.out.println("Training examples: " + dataset.examples().size());
 
-        PoissonRegressionTrainer trainer = new PoissonRegressionTrainer(0.02, 3000, 0.001);
+        PoissonRegressionTrainer trainer = new PoissonRegressionTrainer(50, 1e-6);
         PoissonRegressionTrainer.TrainingResult result = trainer.fit(dataset.examples());
 
-        System.out.println("\n=== Fitted weights (bias, ownAttack, opponentDefense, isHome) ===");
+        System.out.println("\n=== Fitted weights (bias, log ownAttack, log opponentDefense, isHome) ===");
         for (double w : result.weights()) {
             System.out.printf("%.6f%n", w);
         }

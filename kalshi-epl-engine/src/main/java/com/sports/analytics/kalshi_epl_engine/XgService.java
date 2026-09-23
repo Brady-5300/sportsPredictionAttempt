@@ -29,6 +29,7 @@ public class XgService {
      * fallback here; callers should skip the market with a clear reason rather than
      * silently substitute a rough guess for real data.
      */
+    /** Base prediction with NO lineup/injury adjustment (no fixture to look lineups up for). */
     public Optional<Double> calculateHomeXG(String homeTeam, String awayTeam) {
         return calculateHomeXG(homeTeam, awayTeam, Optional.empty());
     }
@@ -49,6 +50,7 @@ public class XgService {
         return Optional.of(combineAttackDefense(homeRating.get().avgXgFor(), awayRating.get().avgXgAgainst(), true));
     }
 
+    /** Base prediction with NO lineup/injury adjustment (no fixture to look lineups up for). */
     public Optional<Double> calculateAwayXG(String homeTeam, String awayTeam) {
         return calculateAwayXG(homeTeam, awayTeam, Optional.empty());
     }
@@ -64,25 +66,26 @@ public class XgService {
     }
 
     /**
-     * The core xG formula: a Poisson regression (log-link) fit on real
-     * Understat results - own attack rating, opponent's defense rating, and
-     * home/away - predicting actual goals scored (see MatchXgModelCalibrator,
-     * which reproduces this fit; rerun MatchXgModelCalibrationTest to
-     * recalibrate against fresher data). Calibration ratio (predicted vs.
-     * actual total goals) was 1.0009 on 468 real matches - essentially exact.
-     * This replaced an earlier hand-picked linear blend (attack*0.6 +
-     * (2-defense)*0.4) that had no home-advantage term at all; the fit found
-     * a real, sizeable one - home teams score about 28% more goals than the
-     * same team would away, all else equal (exp(0.249464) ≈ 1.283).
-     * Package-private so ModelValidationService can reuse the exact same
-     * formula on point-in-time ratings without duplicating the coefficients.
+     * The core xG formula: a Poisson regression on log(own attack rating),
+     * log(opponent's defense rating) and home/away, predicting actual goals
+     * scored - i.e. the standard multiplicative model
+     * goals = base * attack^a * defense^b * homeBoost. Fit with Newton's
+     * method on 3,040 team-matches (EPL 2020-23) using UnderstatXgProvider's
+     * rating setup, then checked on held-out 2024-26 matches (Brier ~0.200).
+     * Rerun MatchXgModelCalibrationTest to recalibrate.
+     *
+     * The previous coefficients (0.13 attack / 0.10 defense on a linear
+     * scale) came from gradient descent that hadn't converged - they barely
+     * let ratings move predictions at all. Exponents near 1 here mean a team
+     * rated twice as dangerous really is predicted to score about twice as much.
+     * Package-private so ModelValidationService can reuse the exact same formula.
      */
     static double combineAttackDefense(double attack, double defense, boolean isHome) {
-        double logit = -0.132558
-            + 0.131990 * attack
-            + 0.100313 * defense
-            + 0.249464 * (isHome ? 1.0 : 0.0);
-        double xg = Math.exp(logit);
+        double logRate = -0.427766
+            + 1.040119 * Math.log(Math.max(attack, 0.05))
+            + 0.851259 * Math.log(Math.max(defense, 0.05))
+            + 0.175887 * (isHome ? 1.0 : 0.0);
+        double xg = Math.exp(logRate);
         return Math.round(xg * 100.0) / 100.0;
     }
 

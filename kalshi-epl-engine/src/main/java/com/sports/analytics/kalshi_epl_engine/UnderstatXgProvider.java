@@ -4,7 +4,9 @@ import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -14,28 +16,41 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 
 /**
- * Computes a team's rolling-average xG-for/xG-against, and each of its
- * players' recent per-90 xG contribution, from its most recent completed
- * Understat matches - using our own {@link ShotXgCalculator} rather than
- * Understat's precomputed xG values.
+ * Computes a team's recency-weighted xG-for/xG-against, and each of its
+ * players' recent per-90 xG contribution, from its completed Understat
+ * matches - using our own {@link ShotXgCalculator} rather than Understat's
+ * precomputed xG values.
  *
- * Both are computed together in one pass over the same rolling window (and
- * cached together) since they're derived from the same match fetches - no
- * point hitting the network twice for the same games.
+ * Rating design (window, decay, cross-season history, shrinkage, promoted
+ * prior) was chosen by scoring variants on held-out EPL seasons (fit on
+ * 2020-23, tested on 2024-26): the old 6-match, current-season-only, 0.75
+ * decay window was mostly noise and barely beat predicting league base rates
+ * (~0.211 vs ~0.215 Brier), while this setup scores ~0.200.
  */
 @Service
 public class UnderstatXgProvider {
 
-    private static final int ROLLING_WINDOW_MATCHES = 6;
-    private static final long CACHE_TTL_SECONDS = 6 * 60 * 60; // 6 hours
+    // Long window with gentle decay: a single match's xG is very noisy, so
+    // 6 heavily-decayed matches (effective sample ~3) mostly measured luck.
+    private static final int ROLLING_WINDOW_MATCHES = 30;
+    private static final double RECENCY_DECAY_FACTOR = 0.96;
 
-    // Exponential recency decay applied to the TEAM rating across the rolling
-    // window: the most recent match gets weight 1.0, each match further back
-    // is discounted by this factor again (match 2 back -> 0.75^2, etc.), so
-    // recent form counts more than form from 5-6 games ago instead of a flat
-    // average. Player per-90 contributions are NOT decayed - they're meant to
-    // represent a player's typical recent output, not weighted team form.
-    private static final double RECENCY_DECAY_FACTOR = 0.75;
+    // Ratings are shrunk toward a prior worth this many matches, so a team
+    // with 2 games played isn't rated on 2 games alone.
+    private static final double PRIOR_PSEUDO_MATCHES = 3.0;
+    private static final double LEAGUE_AVERAGE_XG = 1.40;
+    // Average first-season xG for/against of promoted EPL teams (2020-23).
+    // Understat doesn't cover the Championship, so a promoted team has no
+    // prior-season data and the league average would badly overrate it.
+    private static final double PROMOTED_PRIOR_XG_FOR = 1.14;
+    private static final double PROMOTED_PRIOR_XG_AGAINST = 1.87;
+
+    // Player contributions stay on a short, current-season-only window: they
+    // drive lineup-absence detection, where last season's players (possibly
+    // since transferred) or a 30-match minutes total would give wrong answers.
+    private static final int PLAYER_WINDOW_MATCHES = 6;
+
+    private static final long CACHE_TTL_SECONDS = 6 * 60 * 60; // 6 hours
 
     private final UnderstatScraperService scraper;
     private final ShotXgCalculator shotXgCalculator;
@@ -54,9 +69,10 @@ public class UnderstatXgProvider {
     }
 
     /**
-     * Returns this team's live recency-weighted xG rating, or empty if we don't
-     * have an Understat slug for the team or it has no completed matches yet
-     * this season (e.g. very start of a new season).
+     * Returns this team's live recency-weighted xG rating (spanning this
+     * season and last), or empty if we don't have an Understat slug for the
+     * team or it has no completed EPL matches in either season (e.g. a
+     * promoted team before its first game).
      */
     public Optional<TeamXgRating> getRating(String teamName) {
         return getOrCompute(teamName).rating;
@@ -105,37 +121,57 @@ public class UnderstatXgProvider {
         String slug = teamNameResolver.getUnderstatSlug(teamName);
         if (slug == null) return Optional.empty();
 
-        // Understat seasons run July-June; a date before July belongs to the
-        // season that started the previous calendar year.
-        int season = asOfDateExclusive.getMonthValue() >= 7 ? asOfDateExclusive.getYear() : asOfDateExclusive.getYear() - 1;
-        List<UnderstatTeamMatch> matches = scraper.fetchTeamMatches(slug, season);
-
-        List<UnderstatTeamMatch> completed = matches.stream()
-            .filter(UnderstatTeamMatch::isResult)
-            .filter(m -> m.getDatetime() != null && m.getDatetime().compareTo(asOfDateExclusive.toString()) < 0)
-            .sorted(Comparator.comparing(UnderstatTeamMatch::getDatetime).reversed())
-            .limit(ROLLING_WINDOW_MATCHES)
-            .toList();
-
-        return computeRatingFromMatches(completed).rating;
+        return computeFromHistory(loadHistory(slug, seasonStartYearOf(asOfDateExclusive), asOfDateExclusive)).rating;
     }
 
     private CacheEntry compute(String slug) {
-        int season = currentSeasonStartYear();
-        List<UnderstatTeamMatch> matches = scraper.fetchTeamMatches(slug, season);
-
-        List<UnderstatTeamMatch> completed = matches.stream()
-            .filter(UnderstatTeamMatch::isResult)
-            .sorted(Comparator.comparing(UnderstatTeamMatch::getDatetime).reversed())
-            .limit(ROLLING_WINDOW_MATCHES)
-            .toList();
-
-        return computeRatingFromMatches(completed);
+        return computeFromHistory(loadHistory(slug, currentSeasonStartYear(), null));
     }
 
-    private CacheEntry computeRatingFromMatches(List<UnderstatTeamMatch> completed) {
-        if (completed.isEmpty()) {
-            return new CacheEntry(Optional.empty(), Map.of(), nowSupplier.get());
+    /**
+     * @param currentSeason  most-recent-first completed matches this season
+     * @param previousSeason most-recent-first completed matches from last season
+     *                       (empty for a promoted team)
+     */
+    private record History(List<UnderstatTeamMatch> currentSeason, List<UnderstatTeamMatch> previousSeason) {
+        boolean promoted() {
+            return previousSeason.isEmpty();
+        }
+    }
+
+    private History loadHistory(String slug, int season, LocalDate beforeExclusive) {
+        String seasonStart = season + "-07-01";
+        String previousSeasonStart = (season - 1) + "-07-01";
+
+        List<UnderstatTeamMatch> current = completedMostRecentFirst(scraper.fetchTeamMatches(slug, season)).stream()
+            .filter(m -> m.getDatetime().compareTo(seasonStart) >= 0)
+            .filter(m -> beforeExclusive == null || m.getDatetime().compareTo(beforeExclusive.toString()) < 0)
+            .toList();
+
+        // Understat answers a request for a season the team wasn't in the league
+        // with a DIFFERENT season's data (e.g. a promoted team's "last season"
+        // comes back as this season), so filter by date rather than trusting it.
+        List<UnderstatTeamMatch> previous = completedMostRecentFirst(scraper.fetchTeamMatches(slug, season - 1)).stream()
+            .filter(m -> m.getDatetime().compareTo(previousSeasonStart) >= 0)
+            .filter(m -> m.getDatetime().compareTo(seasonStart) < 0)
+            .toList();
+
+        return new History(current, previous);
+    }
+
+    private List<UnderstatTeamMatch> completedMostRecentFirst(List<UnderstatTeamMatch> matches) {
+        return matches.stream()
+            .filter(UnderstatTeamMatch::isResult)
+            .filter(m -> m.getDatetime() != null)
+            .sorted(Comparator.comparing(UnderstatTeamMatch::getDatetime).reversed())
+            .toList();
+    }
+
+    private CacheEntry computeFromHistory(History history) {
+        List<UnderstatTeamMatch> window = new ArrayList<>(history.currentSeason());
+        window.addAll(history.previousSeason());
+        if (window.size() > ROLLING_WINDOW_MATCHES) {
+            window = window.subList(0, ROLLING_WINDOW_MATCHES);
         }
 
         double weightedFor = 0.0;
@@ -143,42 +179,65 @@ public class UnderstatXgProvider {
         double weightSum = 0.0;
         int counted = 0;
 
+        // window is most-recent-first, so its list index IS how many matches
+        // back this game is - index 0 gets full weight (decay^0 = 1.0).
+        for (int i = 0; i < window.size(); i++) {
+            Optional<TeamSideOfMatch> side = sideOf(window.get(i));
+            if (side.isEmpty()) continue;
+
+            double weight = Math.pow(RECENCY_DECAY_FACTOR, i);
+            weightedFor += weight * sumXg(side.get().ourShots());
+            weightedAgainst += weight * sumXg(side.get().theirShots());
+            weightSum += weight;
+            counted++;
+        }
+
+        // No real match data at all -> no rating. The prior only shrinks real
+        // data; it is never used on its own as a stand-in for missing data.
+        if (counted == 0) {
+            return new CacheEntry(Optional.empty(), Map.of(), nowSupplier.get());
+        }
+
+        double priorFor = history.promoted() ? PROMOTED_PRIOR_XG_FOR : LEAGUE_AVERAGE_XG;
+        double priorAgainst = history.promoted() ? PROMOTED_PRIOR_XG_AGAINST : LEAGUE_AVERAGE_XG;
+        double shrunkFor = (weightedFor + PRIOR_PSEUDO_MATCHES * priorFor) / (weightSum + PRIOR_PSEUDO_MATCHES);
+        double shrunkAgainst = (weightedAgainst + PRIOR_PSEUDO_MATCHES * priorAgainst) / (weightSum + PRIOR_PSEUDO_MATCHES);
+
+        TeamXgRating rating = new TeamXgRating(shrunkFor, shrunkAgainst, counted);
+        Map<String, PlayerXgContribution> contributions = computePlayerContributions(history.currentSeason());
+
+        return new CacheEntry(Optional.of(rating), contributions, nowSupplier.get());
+    }
+
+    private Map<String, PlayerXgContribution> computePlayerContributions(List<UnderstatTeamMatch> currentSeason) {
         Map<String, Double> playerXgTotals = new HashMap<>();
         Map<String, Integer> playerMinutes = new HashMap<>();
         Map<String, Boolean> playerIsDefensive = new HashMap<>();
 
-        // completed is sorted most-recent-first, so its list index IS how many
-        // matches back this game is - index 0 gets full weight (decay^0 = 1.0).
-        for (int i = 0; i < completed.size(); i++) {
-            UnderstatTeamMatch match = completed.get(i);
-            UnderstatMatchDetails details = scraper.fetchMatchDetails(match.getId());
-            boolean weWereHome = "h".equals(match.getSide());
+        for (UnderstatTeamMatch match : currentSeason.subList(0, Math.min(PLAYER_WINDOW_MATCHES, currentSeason.size()))) {
+            Optional<TeamSideOfMatch> side = sideOf(match);
+            if (side.isEmpty()) continue;
 
-            List<UnderstatShot> ourShots = weWereHome ? details.shots().get("h") : details.shots().get("a");
-            List<UnderstatShot> theirShots = weWereHome ? details.shots().get("a") : details.shots().get("h");
-            List<UnderstatPlayerMatchStat> ourRoster = weWereHome ? details.rosters().get("h") : details.rosters().get("a");
-            if (ourShots == null || theirShots == null) {
-                continue;
-            }
-
-            double weight = Math.pow(RECENCY_DECAY_FACTOR, i);
-            weightedFor += weight * sumXg(ourShots);
-            weightedAgainst += weight * sumXg(theirShots);
-            weightSum += weight;
-            counted++;
-
-            accumulatePlayerXg(ourShots, playerXgTotals);
-            accumulatePlayerMinutes(ourRoster, playerMinutes, playerIsDefensive);
+            accumulatePlayerXg(side.get().ourShots(), playerXgTotals);
+            accumulatePlayerMinutes(side.get().ourRoster(), playerMinutes, playerIsDefensive);
         }
 
-        if (counted == 0 || weightSum == 0.0) {
-            return new CacheEntry(Optional.empty(), Map.of(), nowSupplier.get());
-        }
+        return buildContributions(playerXgTotals, playerMinutes, playerIsDefensive);
+    }
 
-        TeamXgRating rating = new TeamXgRating(weightedFor / weightSum, weightedAgainst / weightSum, counted);
-        Map<String, PlayerXgContribution> contributions = buildContributions(playerXgTotals, playerMinutes, playerIsDefensive);
+    private record TeamSideOfMatch(List<UnderstatShot> ourShots, List<UnderstatShot> theirShots,
+                                   List<UnderstatPlayerMatchStat> ourRoster) {
+    }
 
-        return new CacheEntry(Optional.of(rating), contributions, nowSupplier.get());
+    /** This team's side of a match, or empty if the match's shot data is missing. */
+    private Optional<TeamSideOfMatch> sideOf(UnderstatTeamMatch match) {
+        UnderstatMatchDetails details = scraper.fetchMatchDetails(match.getId());
+        String us = "h".equals(match.getSide()) ? "h" : "a";
+        String them = "h".equals(us) ? "a" : "h";
+        List<UnderstatShot> ourShots = details.shots().get(us);
+        List<UnderstatShot> theirShots = details.shots().get(them);
+        if (ourShots == null || theirShots == null) return Optional.empty();
+        return Optional.of(new TeamSideOfMatch(ourShots, theirShots, details.rosters().get(us)));
     }
 
     private void accumulatePlayerXg(List<UnderstatShot> shots, Map<String, Double> playerXgTotals) {
@@ -229,8 +288,12 @@ public class UnderstatXgProvider {
 
     /** Understat identifies a season by its starting year (2025 = the 2025/26 season). */
     int currentSeasonStartYear() {
-        LocalDate today = LocalDate.now();
-        return today.getMonthValue() >= 7 ? today.getYear() : today.getYear() - 1;
+        return seasonStartYearOf(LocalDate.ofInstant(nowSupplier.get(), ZoneOffset.UTC));
+    }
+
+    /** Seasons run July-June; a date before July belongs to the season that started the previous year. */
+    static int seasonStartYearOf(LocalDate date) {
+        return date.getMonthValue() >= 7 ? date.getYear() : date.getYear() - 1;
     }
 
     private record CacheEntry(Optional<TeamXgRating> rating, Map<String, PlayerXgContribution> playerContributions,

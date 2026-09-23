@@ -40,4 +40,11 @@ class TickerParserServiceTest {
         assertEquals("Fulham", teams.getKey());
         assertEquals("Manchester United", teams.getValue());
     }
+
+    @Test
+    void stripsWinnerQuestionSuffixFromAwayTeam() {
+        var teams = parser.extractTeamsFromTitle("Aston Villa vs Arsenal Winner?");
+        assertEquals("Aston Villa", teams.getKey());
+        assertEquals("Arsenal", teams.getValue());
+    }
 }

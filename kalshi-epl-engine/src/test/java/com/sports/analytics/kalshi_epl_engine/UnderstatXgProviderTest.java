@@ -21,17 +21,38 @@ import static org.mockito.Mockito.when;
 
 class UnderstatXgProviderTest {
 
+    // "Today" is mid 2024/25 season, so current season = 2024, previous = 2023.
+    private static final Instant NOW = Instant.parse("2025-02-01T00:00:00Z");
+    private static final int CURRENT_SEASON = 2024;
+    private static final int PREVIOUS_SEASON = 2023;
+
+    private static final double DECAY = 0.96;
+    private static final double PRIOR_MATCHES = 3.0;
+    private static final double LEAGUE_AVG = 1.40;
+    private static final double PROMOTED_FOR = 1.14;
+    private static final double PROMOTED_AGAINST = 1.87;
+
     private final UnderstatScraperService scraper = mock(UnderstatScraperService.class);
     private final ShotXgCalculator calculator = mock(ShotXgCalculator.class);
     private final TeamNameResolver resolver = new TeamNameResolver();
-    private final UnderstatXgProvider provider = new UnderstatXgProvider(scraper, calculator, resolver);
+    private final UnderstatXgProvider provider = newProvider();
+
+    private UnderstatXgProvider newProvider() {
+        UnderstatXgProvider p = new UnderstatXgProvider(scraper, calculator, resolver);
+        p.nowSupplier = () -> NOW;
+        return p;
+    }
 
     private UnderstatTeamMatch completedMatch(String id, String side) {
+        return completedMatchOn(id, side, "2025-01-0" + id.charAt(id.length() - 1));
+    }
+
+    private UnderstatTeamMatch completedMatchOn(String id, String side, String isoDate) {
         UnderstatTeamMatch match = new UnderstatTeamMatch();
         match.setId(id);
         match.setIsResult(true);
         match.setSide(side);
-        match.setDatetime("2025-01-0" + id.charAt(id.length() - 1) + " 15:00:00");
+        match.setDatetime(isoDate + " 15:00:00");
         return match;
     }
 
@@ -39,6 +60,12 @@ class UnderstatXgProviderTest {
         UnderstatShot s = new UnderstatShot();
         s.setPlayer(player);
         return s; // xG value is stubbed via the mocked calculator, not read from the shot
+    }
+
+    private UnderstatShot shotWithXg(String player, double xg) {
+        UnderstatShot s = shot(player);
+        when(calculator.calculateXg(s)).thenReturn(xg);
+        return s;
     }
 
     private UnderstatPlayerMatchStat rosterEntry(String player, int minutes, String position) {
@@ -57,6 +84,10 @@ class UnderstatXgProviderTest {
         ));
     }
 
+    private static double shrunk(double weightedSum, double weightSum, double prior) {
+        return (weightedSum + PRIOR_MATCHES * prior) / (weightSum + PRIOR_MATCHES);
+    }
+
     @Test
     void returnsEmptyForTeamWithNoUnderstatSlug() {
         Optional<TeamXgRating> rating = provider.getRating("Some Newly Promoted Club");
@@ -66,62 +97,73 @@ class UnderstatXgProviderTest {
     }
 
     @Test
-    void aggregatesRecencyWeightedXgForAndAgainstAcrossCompletedMatches() {
-        // match "1" is dated 2025-01-01, match "2" is dated 2025-01-02, so "2" is more
-        // recent and should get the full weight while "1" is discounted by the decay factor.
-        when(scraper.fetchTeamMatches(eq("Arsenal"), anyInt())).thenReturn(List.of(
+    void combinesThisSeasonAndLastSeasonWithRecencyDecayAndShrinksTowardLeagueAverage() {
+        // Current season: match "2" (Jan 2, most recent) and "1" (Jan 1). Previous season: "p1".
+        when(scraper.fetchTeamMatches("Arsenal", CURRENT_SEASON)).thenReturn(List.of(
             completedMatch("1", "h"),
             completedMatch("2", "a")
         ));
+        when(scraper.fetchTeamMatches("Arsenal", PREVIOUS_SEASON)).thenReturn(List.of(
+            completedMatchOn("p1", "h", "2024-03-01")
+        ));
 
-        UnderstatShot ourShot1 = shot("Bukayo Saka");
-        UnderstatShot theirShot1 = shot("Opponent1");
-        stubMatch("1", List.of(ourShot1), List.of(theirShot1), List.of(), List.of());
+        stubMatch("1", List.of(shotWithXg("A", 2.0)), List.of(shotWithXg("B", 0.5)), List.of(), List.of());
+        stubMatch("2", List.of(shotWithXg("C", 1.5)), List.of(shotWithXg("A", 1.0)), List.of(), List.of());
+        stubMatch("p1", List.of(shotWithXg("A", 1.2)), List.of(shotWithXg("D", 0.8)), List.of(), List.of());
 
-        UnderstatShot ourShot2 = shot("Bukayo Saka");
-        UnderstatShot theirShot2 = shot("Opponent2");
-        stubMatch("2", List.of(theirShot2), List.of(ourShot2), List.of(), List.of());
+        TeamXgRating rating = provider.getRating("Arsenal").orElseThrow();
 
-        // match 1 (older, weight 0.75): we were home -> our shots = ourShot1 (xG 2.0), their shots = theirShot1 (xG 0.5)
-        // match 2 (more recent, weight 1.0): we were away -> our shots = ourShot2 (xG 1.0), their shots = theirShot2 (xG 1.5)
-        when(calculator.calculateXg(ourShot1)).thenReturn(2.0);
-        when(calculator.calculateXg(theirShot1)).thenReturn(0.5);
-        when(calculator.calculateXg(ourShot2)).thenReturn(1.0);
-        when(calculator.calculateXg(theirShot2)).thenReturn(1.5);
+        // weights: match 2 -> 1.0, match 1 -> 0.96, p1 -> 0.96^2
+        double w0 = 1.0, w1 = DECAY, w2 = DECAY * DECAY;
+        double weightSum = w0 + w1 + w2;
+        assertEquals(shrunk(w0 * 1.0 + w1 * 2.0 + w2 * 1.2, weightSum, LEAGUE_AVG), rating.avgXgFor(), 1e-9);
+        assertEquals(shrunk(w0 * 1.5 + w1 * 0.5 + w2 * 0.8, weightSum, LEAGUE_AVG), rating.avgXgAgainst(), 1e-9);
+        assertEquals(3, rating.matchesUsed());
+    }
 
-        Optional<TeamXgRating> rating = provider.getRating("Arsenal");
+    @Test
+    void promotedTeamWithNoPreviousSeasonDataIsShrunkTowardPromotedPrior() {
+        when(scraper.fetchTeamMatches("Arsenal", CURRENT_SEASON)).thenReturn(List.of(completedMatch("1", "h")));
+        stubMatch("1", List.of(shotWithXg("A", 2.0)), List.of(shotWithXg("B", 0.5)), List.of(), List.of());
 
-        assertTrue(rating.isPresent());
-        // weightedFor = 1.0*1.0 (match 2) + 0.75*2.0 (match 1) = 2.5; weightSum = 1.75
-        assertEquals(2.5 / 1.75, rating.get().avgXgFor(), 0.0001);
-        // weightedAgainst = 1.0*1.5 (match 2) + 0.75*0.5 (match 1) = 1.875; weightSum = 1.75
-        assertEquals(1.875 / 1.75, rating.get().avgXgAgainst(), 0.0001);
-        assertEquals(2, rating.get().matchesUsed());
+        TeamXgRating rating = provider.getRating("Arsenal").orElseThrow();
+
+        assertEquals(shrunk(2.0, 1.0, PROMOTED_FOR), rating.avgXgFor(), 1e-9);
+        assertEquals(shrunk(0.5, 1.0, PROMOTED_AGAINST), rating.avgXgAgainst(), 1e-9);
+    }
+
+    @Test
+    void previousSeasonRequestAnsweredWithThisSeasonsDataIsNotDoubleCounted() {
+        // Understat answers a request for a season a team wasn't in the league
+        // with a different season's fixtures - here, the same current-season list.
+        when(scraper.fetchTeamMatches(eq("Arsenal"), anyInt())).thenReturn(List.of(
+            completedMatch("1", "h"),
+            completedMatch("2", "h")
+        ));
+        stubMatch("1", List.of(), List.of(), List.of(), List.of());
+        stubMatch("2", List.of(), List.of(), List.of(), List.of());
+
+        TeamXgRating rating = provider.getRating("Arsenal").orElseThrow();
+
+        assertEquals(2, rating.matchesUsed());
+        assertEquals(shrunk(0.0, 1.0 + DECAY, PROMOTED_FOR), rating.avgXgFor(), 1e-9);
     }
 
     @Test
     void mostRecentMatchIsWeightedMoreThanAnOlderOne() {
-        // Two providers with identical raw match data except which match is "more recent" -
-        // the one whose big attacking match was most recent should end up with a
-        // higher weighted average than the one whose big match was further back.
         when(scraper.fetchTeamMatches(eq("Arsenal"), anyInt())).thenReturn(List.of(
             completedMatch("1", "h"), // 2025-01-01, older
             completedMatch("2", "h")  // 2025-01-02, more recent
         ));
 
-        UnderstatShot bigMatchShot = shot("Player A");
-        UnderstatShot smallMatchShot = shot("Player A");
-        when(calculator.calculateXg(bigMatchShot)).thenReturn(3.0);
-        when(calculator.calculateXg(smallMatchShot)).thenReturn(0.5);
+        UnderstatShot bigMatchShot = shotWithXg("Player A", 3.0);
+        UnderstatShot smallMatchShot = shotWithXg("Player A", 0.5);
 
-        // Big attacking match is the OLDER one (match "1"), small one is more recent (match "2").
         stubMatch("1", List.of(bigMatchShot), List.of(), List.of(), List.of());
         stubMatch("2", List.of(smallMatchShot), List.of(), List.of(), List.of());
-
         double bigMatchOlderAvg = provider.getRating("Arsenal").get().avgXgFor();
 
-        // Now flip which match is more recent by reusing a fresh provider (no cache reuse).
-        UnderstatXgProvider provider2 = new UnderstatXgProvider(scraper, calculator, resolver);
+        UnderstatXgProvider provider2 = newProvider();
         stubMatch("1", List.of(smallMatchShot), List.of(), List.of(), List.of());
         stubMatch("2", List.of(bigMatchShot), List.of(), List.of(), List.of());
         double bigMatchNewerAvg = provider2.getRating("Arsenal").get().avgXgFor();
@@ -153,34 +195,31 @@ class UnderstatXgProviderTest {
         provider.getRating("Arsenal");
         provider.getRating("Arsenal");
 
-        verify(scraper, times(1)).fetchTeamMatches(eq("Arsenal"), anyInt());
-    }
-
-    @Test
-    void refetchesAfterCacheExpires() {
-        Instant start = Instant.parse("2026-01-01T00:00:00Z");
-        provider.nowSupplier = () -> start;
-
-        when(scraper.fetchTeamMatches(eq("Arsenal"), anyInt())).thenReturn(List.of(completedMatch("1", "h")));
-        stubMatch("1", List.of(), List.of(), List.of(), List.of());
-
-        provider.getRating("Arsenal");
-        provider.nowSupplier = () -> start.plusSeconds(7 * 60 * 60); // 7h later, past the 6h TTL
-        provider.getRating("Arsenal");
-
+        // One fetch each for this season and last season, then served from cache.
         verify(scraper, times(2)).fetchTeamMatches(eq("Arsenal"), anyInt());
     }
 
     @Test
-    void treatsEmptyShotListsAsZeroXgNotAsMissingData() {
+    void refetchesAfterCacheExpires() {
         when(scraper.fetchTeamMatches(eq("Arsenal"), anyInt())).thenReturn(List.of(completedMatch("1", "h")));
         stubMatch("1", List.of(), List.of(), List.of(), List.of());
 
-        Optional<TeamXgRating> rating = provider.getRating("Arsenal");
+        provider.getRating("Arsenal");
+        provider.nowSupplier = () -> NOW.plusSeconds(7 * 60 * 60); // 7h later, past the 6h TTL
+        provider.getRating("Arsenal");
 
-        assertTrue(rating.isPresent());
-        assertEquals(0.0, rating.get().avgXgFor(), 0.0001);
-        assertFalse(rating.get().matchesUsed() == 0);
+        verify(scraper, times(4)).fetchTeamMatches(eq("Arsenal"), anyInt());
+    }
+
+    @Test
+    void emptyShotListsCountAsARealZeroXgMatchNotMissingData() {
+        when(scraper.fetchTeamMatches(eq("Arsenal"), anyInt())).thenReturn(List.of(completedMatch("1", "h")));
+        stubMatch("1", List.of(), List.of(), List.of(), List.of());
+
+        TeamXgRating rating = provider.getRating("Arsenal").orElseThrow();
+
+        assertEquals(1, rating.matchesUsed());
+        assertEquals(shrunk(0.0, 1.0, PROMOTED_FOR), rating.avgXgFor(), 1e-9);
     }
 
     @Test
@@ -190,15 +229,10 @@ class UnderstatXgProviderTest {
             completedMatch("2", "a")
         ));
 
-        UnderstatShot sakaShot1 = shot("Bukayo Saka");
-        UnderstatShot sakaShot2 = shot("Bukayo Saka");
-        when(calculator.calculateXg(sakaShot1)).thenReturn(0.4);
-        when(calculator.calculateXg(sakaShot2)).thenReturn(0.6);
-
-        stubMatch("1", List.of(sakaShot1), List.of(),
+        stubMatch("1", List.of(shotWithXg("Bukayo Saka", 0.4)), List.of(),
             List.of(rosterEntry("Bukayo Saka", 90, "FWR"), rosterEntry("William Saliba", 90, "DC")),
             List.of());
-        stubMatch("2", List.of(), List.of(sakaShot2),
+        stubMatch("2", List.of(), List.of(shotWithXg("Bukayo Saka", 0.6)),
             List.of(),
             List.of(rosterEntry("Bukayo Saka", 45, "FWR"), rosterEntry("William Saliba", 90, "DC")));
 
@@ -217,6 +251,22 @@ class UnderstatXgProviderTest {
     }
 
     @Test
+    void playerContributionsIgnoreLastSeasonsMatches() {
+        // Last season's players may have left the club - counting them would make
+        // lineup-absence detection flag departed players as "missing regulars".
+        when(scraper.fetchTeamMatches("Arsenal", CURRENT_SEASON)).thenReturn(List.of(completedMatch("1", "h")));
+        when(scraper.fetchTeamMatches("Arsenal", PREVIOUS_SEASON)).thenReturn(List.of(completedMatchOn("p1", "h", "2024-03-01")));
+        stubMatch("1", List.of(), List.of(), List.of(rosterEntry("Current Player", 90, "FWR")), List.of());
+        stubMatch("p1", List.of(shotWithXg("Departed Player", 0.9)), List.of(),
+            List.of(rosterEntry("Departed Player", 90, "FWR")), List.of());
+
+        Map<String, PlayerXgContribution> contributions = provider.getPlayerContributions("Arsenal");
+
+        assertTrue(contributions.containsKey("Current Player"));
+        assertFalse(contributions.containsKey("Departed Player"));
+    }
+
+    @Test
     void returnsEmptyContributionsWhenNoLiveDataAvailable() {
         Map<String, PlayerXgContribution> contributions = provider.getPlayerContributions("Some Newly Promoted Club");
         assertTrue(contributions.isEmpty());
@@ -228,21 +278,15 @@ class UnderstatXgProviderTest {
     void ratingAsOfOnlyUsesMatchesStrictlyBeforeTheGivenDate() {
         // Three matches: Jan 1, Jan 3, Jan 5. Backtesting "as of" Jan 5 should only
         // see Jan 1 and Jan 3 - NOT the Jan 5 match itself (that would be lookahead).
-        UnderstatTeamMatch m1 = completedMatchOn("1", "h", "2025-01-01");
-        UnderstatTeamMatch m2 = completedMatchOn("2", "h", "2025-01-03");
-        UnderstatTeamMatch m3 = completedMatchOn("3", "h", "2025-01-05");
-        when(scraper.fetchTeamMatches(eq("Arsenal"), anyInt())).thenReturn(List.of(m1, m2, m3));
+        when(scraper.fetchTeamMatches(eq("Arsenal"), anyInt())).thenReturn(List.of(
+            completedMatchOn("1", "h", "2025-01-01"),
+            completedMatchOn("2", "h", "2025-01-03"),
+            completedMatchOn("3", "h", "2025-01-05")
+        ));
 
-        UnderstatShot shot1 = shot("Player A");
-        UnderstatShot shot2 = shot("Player A");
-        UnderstatShot shot3 = shot("Player A");
-        when(calculator.calculateXg(shot1)).thenReturn(1.0);
-        when(calculator.calculateXg(shot2)).thenReturn(2.0);
-        when(calculator.calculateXg(shot3)).thenReturn(100.0); // would massively skew the rating if leaked in
-
-        stubMatch("1", List.of(shot1), List.of(), List.of(), List.of());
-        stubMatch("2", List.of(shot2), List.of(), List.of(), List.of());
-        stubMatch("3", List.of(shot3), List.of(), List.of(), List.of());
+        stubMatch("1", List.of(shotWithXg("Player A", 1.0)), List.of(), List.of(), List.of());
+        stubMatch("2", List.of(shotWithXg("Player A", 2.0)), List.of(), List.of(), List.of());
+        stubMatch("3", List.of(shotWithXg("Player A", 100.0)), List.of(), List.of(), List.of()); // would skew the rating if leaked in
 
         Optional<TeamXgRating> asOfJan5 = provider.getRatingAsOf("Arsenal", java.time.LocalDate.of(2025, 1, 5));
 
@@ -252,9 +296,20 @@ class UnderstatXgProviderTest {
     }
 
     @Test
+    void ratingAsOfIncludesTheSeasonBeforeThatDate() {
+        when(scraper.fetchTeamMatches("Arsenal", 2024)).thenReturn(List.of(completedMatchOn("1", "h", "2024-08-20")));
+        when(scraper.fetchTeamMatches("Arsenal", 2023)).thenReturn(List.of(completedMatchOn("p1", "h", "2024-05-10")));
+        stubMatch("1", List.of(), List.of(), List.of(), List.of());
+        stubMatch("p1", List.of(), List.of(), List.of(), List.of());
+
+        TeamXgRating rating = provider.getRatingAsOf("Arsenal", java.time.LocalDate.of(2024, 9, 1)).orElseThrow();
+
+        assertEquals(2, rating.matchesUsed());
+    }
+
+    @Test
     void ratingAsOfReturnsEmptyWhenNoMatchesBeforeThatDate() {
-        UnderstatTeamMatch futureMatch = completedMatchOn("1", "h", "2025-06-01");
-        when(scraper.fetchTeamMatches(eq("Arsenal"), anyInt())).thenReturn(List.of(futureMatch));
+        when(scraper.fetchTeamMatches(eq("Arsenal"), anyInt())).thenReturn(List.of(completedMatchOn("1", "h", "2025-06-01")));
 
         Optional<TeamXgRating> asOfEarlyDate = provider.getRatingAsOf("Arsenal", java.time.LocalDate.of(2025, 1, 1));
 
@@ -265,14 +320,5 @@ class UnderstatXgProviderTest {
     void ratingAsOfReturnsEmptyForUnmappedTeam() {
         assertTrue(provider.getRatingAsOf("Some Newly Promoted Club", java.time.LocalDate.of(2025, 1, 1)).isEmpty());
         verifyNoInteractions(scraper);
-    }
-
-    private UnderstatTeamMatch completedMatchOn(String id, String side, String isoDate) {
-        UnderstatTeamMatch match = new UnderstatTeamMatch();
-        match.setId(id);
-        match.setIsResult(true);
-        match.setSide(side);
-        match.setDatetime(isoDate + " 15:00:00");
-        return match;
     }
 }

@@ -11,8 +11,9 @@ public class PoissonModel {
         double awayWinProb = 0.0;
         double tieProb = 0.0;
 
-        // Max goals to iterate through in our Poisson matrix (0 to 6 goals)
-        int maxGoals = 6;
+        // 0-10 goals per side; at 6 a strong favourite's win probability was
+        // noticeably truncated before renormalisation.
+        int maxGoals = 10;
 
         for (int i = 0; i <= maxGoals; i++) {
             for (int j = 0; j <= maxGoals; j++) {

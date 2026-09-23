@@ -3,6 +3,11 @@ package com.sports.analytics.kalshi_epl_engine;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
+import java.time.Duration;
+import java.time.Instant;
+import java.time.format.DateTimeParseException;
+import java.util.Optional;
+
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class KalshiMarket {
 
@@ -23,6 +28,12 @@ public class KalshiMarket {
     @JsonProperty("yes_bid_dollars")
     private String yesBidDollars;
 
+    @JsonProperty("yes_ask_dollars")
+    private String yesAskDollars;
+
+    @JsonProperty("occurrence_datetime")
+    private String occurrenceDatetime;
+
     @JsonProperty("last_price_dollars")
     private String lastPriceDollars;
 
@@ -42,7 +53,7 @@ public class KalshiMarket {
     public String getResult() { return result; }
     public void setResult(String result) { this.result = result; }
 
-    /** ISO-8601 timestamp string of when this market stopped trading (a good proxy for kickoff). */
+    /** ISO-8601 timestamp of when this market stopped trading - around full time, NOT kickoff (markets trade in-play). */
     public String getCloseTime() { return closeTime; }
     public void setCloseTime(String closeTime) { this.closeTime = closeTime; }
 
@@ -54,6 +65,45 @@ public class KalshiMarket {
 
     public String getYesBidDollars() { return yesBidDollars; }
     public void setYesBidDollars(String yesBidDollars) { this.yesBidDollars = yesBidDollars; }
+
+    public String getYesAskDollars() { return yesAskDollars; }
+    public void setYesAskDollars(String yesAskDollars) { this.yesAskDollars = yesAskDollars; }
+
+    public String getOccurrenceDatetime() { return occurrenceDatetime; }
+    public void setOccurrenceDatetime(String occurrenceDatetime) { this.occurrenceDatetime = occurrenceDatetime; }
+
+    /**
+     * Kickoff time, derived from occurrence_datetime, which Kalshi sets 3 hours
+     * after kickoff for KXEPLGAME (checked against Understat kickoff times on
+     * 12 matches, exact every time). Empty if the field is missing or unparseable.
+     */
+    public Optional<Instant> estimatedKickoff() {
+        if (occurrenceDatetime == null) return Optional.empty();
+        try {
+            return Optional.of(Instant.parse(occurrenceDatetime).minus(Duration.ofHours(3)));
+        } catch (DateTimeParseException e) {
+            return Optional.empty();
+        }
+    }
+
+    /** Best YES bid in cents, if one is quoted. */
+    public Optional<Integer> yesBidCents() {
+        return dollarsToCents(yesBidDollars).or(() -> yesBid > 0 ? Optional.of(yesBid) : Optional.empty());
+    }
+
+    /** Best YES ask in cents, if one is quoted. */
+    public Optional<Integer> yesAskCents() {
+        return dollarsToCents(yesAskDollars).or(() -> yesAsk > 0 ? Optional.of(yesAsk) : Optional.empty());
+    }
+
+    private static Optional<Integer> dollarsToCents(String dollars) {
+        if (dollars == null) return Optional.empty();
+        try {
+            return Optional.of((int) Math.round(Double.parseDouble(dollars) * 100));
+        } catch (NumberFormatException e) {
+            return Optional.empty();
+        }
+    }
 
     public String getLastPriceDollars() { return lastPriceDollars; }
     public void setLastPriceDollars(String lastPriceDollars) { this.lastPriceDollars = lastPriceDollars; }

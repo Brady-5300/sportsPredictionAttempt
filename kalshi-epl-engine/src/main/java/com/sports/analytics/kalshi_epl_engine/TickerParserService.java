@@ -45,7 +45,8 @@ public class TickerParserService {
     }
 
     private String cleanTeamName(String name) {
-        return name.replaceAll("(?i)\\b(to win|win|draw|tie)\\b", "").trim();
+        // Kalshi titles some markets "Home vs Away Winner?" - strip that suffix too.
+        return name.replaceAll("(?i)\\b(to win|winner|win|draw|tie)\\b", "").replace("?", "").trim();
     }
 
     /**
