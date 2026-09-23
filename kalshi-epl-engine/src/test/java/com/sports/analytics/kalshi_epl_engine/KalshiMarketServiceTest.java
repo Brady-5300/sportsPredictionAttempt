@@ -15,6 +15,7 @@ class KalshiMarketServiceTest {
         new UnderstatXgProvider(new UnderstatScraperService(new ScraperHealthMonitor()), new ShotXgCalculator(), teamNameResolver);
     private final FotMobClient fotMobClient =
         new FotMobClient("https://www.fotmob.com", new org.springframework.web.client.RestTemplate());
+    private final PredictionLogService predictionLogService = mock(PredictionLogService.class);
     private final KalshiMarketService service = new KalshiMarketService(
         new PoissonModel(),
         new TickerParserService(),
@@ -23,7 +24,8 @@ class KalshiMarketServiceTest {
             understatXgProvider,
             new LineupFormAdjustmentService(fotMobClient, understatXgProvider)
         ),
-        new ScraperHealthMonitor()
+        new ScraperHealthMonitor(),
+        predictionLogService
     );
 
     private KalshiMarket marketWithTicker(String ticker) {
@@ -107,7 +109,8 @@ class KalshiMarketServiceTest {
                 understatXgProvider,
                 new LineupFormAdjustmentService(fotMobClient, understatXgProvider)
             ),
-            offlineMonitor
+            offlineMonitor,
+            predictionLogService
         );
 
         MarketScanResult result = offlineService.evaluateLiveMarkets();

@@ -221,4 +221,58 @@ class UnderstatXgProviderTest {
         Map<String, PlayerXgContribution> contributions = provider.getPlayerContributions("Some Newly Promoted Club");
         assertTrue(contributions.isEmpty());
     }
+
+    // === getRatingAsOf (point-in-time, for backtesting) ===
+
+    @Test
+    void ratingAsOfOnlyUsesMatchesStrictlyBeforeTheGivenDate() {
+        // Three matches: Jan 1, Jan 3, Jan 5. Backtesting "as of" Jan 5 should only
+        // see Jan 1 and Jan 3 - NOT the Jan 5 match itself (that would be lookahead).
+        UnderstatTeamMatch m1 = completedMatchOn("1", "h", "2025-01-01");
+        UnderstatTeamMatch m2 = completedMatchOn("2", "h", "2025-01-03");
+        UnderstatTeamMatch m3 = completedMatchOn("3", "h", "2025-01-05");
+        when(scraper.fetchTeamMatches(eq("Arsenal"), anyInt())).thenReturn(List.of(m1, m2, m3));
+
+        UnderstatShot shot1 = shot("Player A");
+        UnderstatShot shot2 = shot("Player A");
+        UnderstatShot shot3 = shot("Player A");
+        when(calculator.calculateXg(shot1)).thenReturn(1.0);
+        when(calculator.calculateXg(shot2)).thenReturn(2.0);
+        when(calculator.calculateXg(shot3)).thenReturn(100.0); // would massively skew the rating if leaked in
+
+        stubMatch("1", List.of(shot1), List.of(), List.of(), List.of());
+        stubMatch("2", List.of(shot2), List.of(), List.of(), List.of());
+        stubMatch("3", List.of(shot3), List.of(), List.of(), List.of());
+
+        Optional<TeamXgRating> asOfJan5 = provider.getRatingAsOf("Arsenal", java.time.LocalDate.of(2025, 1, 5));
+
+        assertTrue(asOfJan5.isPresent());
+        assertEquals(2, asOfJan5.get().matchesUsed());
+        assertTrue(asOfJan5.get().avgXgFor() < 10.0, "the Jan 5 match's huge xG must not leak into a rating computed as of Jan 5");
+    }
+
+    @Test
+    void ratingAsOfReturnsEmptyWhenNoMatchesBeforeThatDate() {
+        UnderstatTeamMatch futureMatch = completedMatchOn("1", "h", "2025-06-01");
+        when(scraper.fetchTeamMatches(eq("Arsenal"), anyInt())).thenReturn(List.of(futureMatch));
+
+        Optional<TeamXgRating> asOfEarlyDate = provider.getRatingAsOf("Arsenal", java.time.LocalDate.of(2025, 1, 1));
+
+        assertTrue(asOfEarlyDate.isEmpty());
+    }
+
+    @Test
+    void ratingAsOfReturnsEmptyForUnmappedTeam() {
+        assertTrue(provider.getRatingAsOf("Some Newly Promoted Club", java.time.LocalDate.of(2025, 1, 1)).isEmpty());
+        verifyNoInteractions(scraper);
+    }
+
+    private UnderstatTeamMatch completedMatchOn(String id, String side, String isoDate) {
+        UnderstatTeamMatch match = new UnderstatTeamMatch();
+        match.setId(id);
+        match.setIsResult(true);
+        match.setSide(side);
+        match.setDatetime(isoDate + " 15:00:00");
+        return match;
+    }
 }

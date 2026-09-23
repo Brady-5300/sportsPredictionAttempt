@@ -16,6 +16,7 @@ public class UnderstatTeamMatch {
     private boolean isResult;
     private Map<String, String> h;
     private Map<String, String> a;
+    private Map<String, String> goals;
     private String datetime;
     private String side;
 
@@ -40,4 +41,26 @@ public class UnderstatTeamMatch {
 
     public String getHomeTeamTitle() { return h == null ? null : h.get("title"); }
     public String getAwayTeamTitle() { return a == null ? null : a.get("title"); }
+
+    public Map<String, String> getGoals() { return goals; }
+    public void setGoals(Map<String, String> goals) { this.goals = goals; }
+
+    private Integer parseGoals(String key) {
+        if (goals == null) return null;
+        try {
+            return Integer.parseInt(goals.get(key));
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** Goals scored by the team this schedule belongs to, or null if unavailable (e.g. not yet played). */
+    public Integer getOwnGoals() {
+        return "h".equals(side) ? parseGoals("h") : parseGoals("a");
+    }
+
+    /** Goals conceded by the team this schedule belongs to, or null if unavailable. */
+    public Integer getOpponentGoals() {
+        return "h".equals(side) ? parseGoals("a") : parseGoals("h");
+    }
 }

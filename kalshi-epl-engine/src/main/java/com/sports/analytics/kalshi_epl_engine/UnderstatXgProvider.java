@@ -92,6 +92,34 @@ public class UnderstatXgProvider {
         return ChronoUnit.SECONDS.between(entry.fetchedAt, nowSupplier.get()) > CACHE_TTL_SECONDS;
     }
 
+    /**
+     * Point-in-time version of {@link #getRating}, for backtesting: only
+     * considers matches strictly before {@code asOfDateExclusive}, so a
+     * backtest of a past match can never see results from after that match -
+     * the same rolling-window/recency-decay logic as the live rating, just
+     * computed as if "today" were back then. Not cached (each call is for a
+     * different historical date, so a time-based cache wouldn't help) and does
+     * not affect the live {@link #getRating} cache in any way.
+     */
+    public Optional<TeamXgRating> getRatingAsOf(String teamName, LocalDate asOfDateExclusive) {
+        String slug = teamNameResolver.getUnderstatSlug(teamName);
+        if (slug == null) return Optional.empty();
+
+        // Understat seasons run July-June; a date before July belongs to the
+        // season that started the previous calendar year.
+        int season = asOfDateExclusive.getMonthValue() >= 7 ? asOfDateExclusive.getYear() : asOfDateExclusive.getYear() - 1;
+        List<UnderstatTeamMatch> matches = scraper.fetchTeamMatches(slug, season);
+
+        List<UnderstatTeamMatch> completed = matches.stream()
+            .filter(UnderstatTeamMatch::isResult)
+            .filter(m -> m.getDatetime() != null && m.getDatetime().compareTo(asOfDateExclusive.toString()) < 0)
+            .sorted(Comparator.comparing(UnderstatTeamMatch::getDatetime).reversed())
+            .limit(ROLLING_WINDOW_MATCHES)
+            .toList();
+
+        return computeRatingFromMatches(completed).rating;
+    }
+
     private CacheEntry compute(String slug) {
         int season = currentSeasonStartYear();
         List<UnderstatTeamMatch> matches = scraper.fetchTeamMatches(slug, season);
@@ -102,6 +130,10 @@ public class UnderstatXgProvider {
             .limit(ROLLING_WINDOW_MATCHES)
             .toList();
 
+        return computeRatingFromMatches(completed);
+    }
+
+    private CacheEntry computeRatingFromMatches(List<UnderstatTeamMatch> completed) {
         if (completed.isEmpty()) {
             return new CacheEntry(Optional.empty(), Map.of(), nowSupplier.get());
         }

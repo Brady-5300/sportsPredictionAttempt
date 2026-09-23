@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.zip.GZIPInputStream;
 
 /**
@@ -38,6 +39,13 @@ public class UnderstatScraperService {
     private final RestTemplate restTemplate = new RestTemplate();
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final ScraperHealthMonitor healthMonitor;
+
+    // A completed match's shots/rosters never change once played, so this can be
+    // cached permanently rather than re-fetched - matters a lot for backtesting,
+    // where the same historical match gets asked about repeatedly across many
+    // different "as of" rating windows. Only successful fetches are cached; a
+    // transient failure must not get permanently remembered as "no data".
+    private final ConcurrentHashMap<String, UnderstatMatchDetails> matchDetailsCache = new ConcurrentHashMap<>();
 
     public UnderstatScraperService(ScraperHealthMonitor healthMonitor) {
         this.healthMonitor = healthMonitor;
@@ -84,11 +92,15 @@ public class UnderstatScraperService {
      * also need per-player minutes, to avoid hitting the endpoint twice.
      */
     public UnderstatMatchDetails fetchMatchDetails(String matchId) {
+        UnderstatMatchDetails cached = matchDetailsCache.get(matchId);
+        if (cached != null) return cached;
+
         String url = BASE_URL + "/getMatchData/" + matchId;
         try {
             String json = getAsAjax(url);
             UnderstatMatchDetails result = new UnderstatMatchDetails(parseMatchShots(json), parseMatchRosters(json));
             healthMonitor.recordSuccess(SOURCE);
+            matchDetailsCache.put(matchId, result);
             return result;
         } catch (Exception e) {
             System.err.println("[UNDERSTAT] Failed to fetch match details for " + matchId + ": " + e.getMessage());

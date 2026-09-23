@@ -9,6 +9,10 @@ public class KalshiMarket {
     private String ticker;
     private String title;
     private String status;
+    private String result;
+
+    @JsonProperty("close_time")
+    private String closeTime;
 
     @JsonProperty("yes_bid")
     private int yesBid;
@@ -33,6 +37,14 @@ public class KalshiMarket {
 
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+
+    /** "yes" or "no" once the market is settled; empty/null while still active. */
+    public String getResult() { return result; }
+    public void setResult(String result) { this.result = result; }
+
+    /** ISO-8601 timestamp string of when this market stopped trading (a good proxy for kickoff). */
+    public String getCloseTime() { return closeTime; }
+    public void setCloseTime(String closeTime) { this.closeTime = closeTime; }
 
     public int getYesBid() { return yesBid; }
     public void setYesBid(int yesBid) { this.yesBid = yesBid; }

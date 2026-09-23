@@ -46,11 +46,7 @@ public class XgService {
             return Optional.empty();
         }
 
-        double homeAttack = homeRating.get().avgXgFor();
-        double awayDefense = awayRating.get().avgXgAgainst();
-
-        double xg = (homeAttack * 0.6) + ((2.0 - awayDefense) * 0.4);
-        return Optional.of(Math.round(xg * 100.0) / 100.0);
+        return Optional.of(combineAttackDefense(homeRating.get().avgXgFor(), awayRating.get().avgXgAgainst(), true));
     }
 
     public Optional<Double> calculateAwayXG(String homeTeam, String awayTeam) {
@@ -64,11 +60,30 @@ public class XgService {
             return Optional.empty();
         }
 
-        double awayAttack = awayRating.get().avgXgFor();
-        double homeDefense = homeRating.get().avgXgAgainst();
+        return Optional.of(combineAttackDefense(awayRating.get().avgXgFor(), homeRating.get().avgXgAgainst(), false));
+    }
 
-        double xg = (awayAttack * 0.6) + ((2.0 - homeDefense) * 0.4);
-        return Optional.of(Math.round(xg * 100.0) / 100.0);
+    /**
+     * The core xG formula: a Poisson regression (log-link) fit on real
+     * Understat results - own attack rating, opponent's defense rating, and
+     * home/away - predicting actual goals scored (see MatchXgModelCalibrator,
+     * which reproduces this fit; rerun MatchXgModelCalibrationTest to
+     * recalibrate against fresher data). Calibration ratio (predicted vs.
+     * actual total goals) was 1.0009 on 468 real matches - essentially exact.
+     * This replaced an earlier hand-picked linear blend (attack*0.6 +
+     * (2-defense)*0.4) that had no home-advantage term at all; the fit found
+     * a real, sizeable one - home teams score about 28% more goals than the
+     * same team would away, all else equal (exp(0.249464) ≈ 1.283).
+     * Package-private so ModelValidationService can reuse the exact same
+     * formula on point-in-time ratings without duplicating the coefficients.
+     */
+    static double combineAttackDefense(double attack, double defense, boolean isHome) {
+        double logit = -0.132558
+            + 0.131990 * attack
+            + 0.100313 * defense
+            + 0.249464 * (isHome ? 1.0 : 0.0);
+        double xg = Math.exp(logit);
+        return Math.round(xg * 100.0) / 100.0;
     }
 
     /**

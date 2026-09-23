@@ -18,15 +18,18 @@ public class KalshiMarketService {
     private final TickerParserService tickerParserService;
     private final XgService xgService;
     private final ScraperHealthMonitor healthMonitor;
+    private final PredictionLogService predictionLogService;
 
     public KalshiMarketService(PoissonModel poissonModel,
                                 TickerParserService tickerParserService,
                                 XgService xgService,
-                                ScraperHealthMonitor healthMonitor) {
+                                ScraperHealthMonitor healthMonitor,
+                                PredictionLogService predictionLogService) {
         this.poissonModel = poissonModel;
         this.tickerParserService = tickerParserService;
         this.xgService = xgService;
         this.healthMonitor = healthMonitor;
+        this.predictionLogService = predictionLogService;
     }
 
     /**
@@ -98,6 +101,9 @@ public class KalshiMarketService {
                     String marketType = resolveMarketType(market, rawTitle, homeTeam, awayTeam);
 
                     double modelProb = poissonModel.calculateMarketProbability(homeXG.get(), awayXG.get(), marketType);
+
+                    predictionLogService.logIfNew(ticker, fullTitle, marketType,
+                        matchDate.map(LocalDate::toString).orElse(""), modelProb);
 
                     int priceCents = market.resolvePriceCents();
                     // Skip if there's truly no active market pricing available

@@ -32,10 +32,11 @@ class XgServiceTest {
         when(provider.getRating("Arsenal")).thenReturn(Optional.of(new TeamXgRating(2.2, 0.9, 6)));
         when(provider.getRating("Fulham")).thenReturn(Optional.of(new TeamXgRating(1.1, 1.6, 6)));
 
-        // homeXG = homeAttack(2.2)*0.6 + (2.0 - awayDefense(1.6))*0.4 = 1.32 + 0.16 = 1.48
+        // homeXG = exp(-0.132558 + 0.131990*2.2 + 0.100313*1.6 + 0.249464*1) ≈ 1.76
+        // (see XgService.combineAttackDefense - the fitted Poisson regression formula)
         Optional<Double> homeXg = xgService.calculateHomeXG("Arsenal", "Fulham");
         assertTrue(homeXg.isPresent());
-        assertEquals(1.48, homeXg.get(), 0.001);
+        assertEquals(1.76, homeXg.get(), 0.01);
 
         assertTrue(xgService.hasLiveDataFor("Arsenal", "Fulham"));
     }
@@ -65,10 +66,21 @@ class XgServiceTest {
         when(provider.getRating("Arsenal")).thenReturn(Optional.of(new TeamXgRating(2.2, 0.9, 6)));
         when(provider.getRating("Fulham")).thenReturn(Optional.of(new TeamXgRating(1.1, 1.6, 6)));
 
-        // awayXG = awayAttack(1.1)*0.6 + (2.0 - homeDefense(0.9))*0.4 = 0.66 + 0.44 = 1.10
+        // awayXG = exp(-0.132558 + 0.131990*1.1 + 0.100313*0.9 + 0.249464*0) ≈ 1.11
         Optional<Double> awayXg = xgService.calculateAwayXG("Arsenal", "Fulham");
         assertTrue(awayXg.isPresent());
-        assertEquals(1.10, awayXg.get(), 0.001);
+        assertEquals(1.11, awayXg.get(), 0.01);
+    }
+
+    @Test
+    void sameTeamRatingsScoreHigherAtHomeThanAway() {
+        // The fitted formula found a real home-advantage term - a team with
+        // identical attack/defense ratings should be predicted to score more
+        // at home than away, all else equal.
+        double homeXg = XgService.combineAttackDefense(1.5, 1.2, true);
+        double awayXg = XgService.combineAttackDefense(1.5, 1.2, false);
+
+        assertTrue(homeXg > awayXg, "identical ratings should still predict higher xG at home (" + homeXg + " vs " + awayXg + ")");
     }
 
     @Test
@@ -88,8 +100,13 @@ class XgServiceTest {
         Optional<Double> homeXg = xgService.calculateHomeXG("Arsenal", "Fulham");
 
         // homeXG should reflect the ADJUSTED attack (3.0), not the raw base (2.0):
-        // 3.0*0.6 + (2.0 - 1.0)*0.4 = 1.8 + 0.4 = 2.2
+        // exp(-0.132558 + 0.131990*3.0 + 0.100313*1.0 + 0.249464*1) ≈ 1.85
         assertTrue(homeXg.isPresent());
-        assertEquals(2.2, homeXg.get(), 0.001);
+        assertEquals(1.85, homeXg.get(), 0.01);
+
+        // Sanity check the direction is still right even though the exact number changed:
+        // boosting attack from 2.0 to 3.0 must increase predicted xG, not decrease it.
+        double xgWithoutBoost = XgService.combineAttackDefense(2.0, 1.0, true);
+        assertTrue(homeXg.get() > xgWithoutBoost);
     }
 }
