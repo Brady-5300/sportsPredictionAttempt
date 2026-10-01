@@ -1,6 +1,7 @@
 package com.sports.analytics.kalshi_epl_engine;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.ObjectMapper;
 
@@ -39,8 +40,6 @@ import java.util.function.Supplier;
 @Service
 public class PredictionLogService {
 
-    private static final Path DEFAULT_LOG_FILE = Path.of("data", "prediction-log.jsonl");
-
     // A bid/ask spread wider than this isn't a meaningful price to compare against.
     static final int MAX_USABLE_SPREAD_CENTS = 10;
 
@@ -53,8 +52,9 @@ public class PredictionLogService {
     Supplier<Instant> nowSupplier = Instant::now;
 
     @Autowired
-    public PredictionLogService(KalshiHistoricalClient historicalClient) {
-        this(historicalClient, DEFAULT_LOG_FILE);
+    public PredictionLogService(KalshiHistoricalClient historicalClient,
+                                @Value("${prediction-log.path:data/prediction-log.jsonl}") String logFile) {
+        this(historicalClient, Path.of(logFile));
     }
 
     PredictionLogService(KalshiHistoricalClient historicalClient, Path logFile) {
@@ -73,30 +73,38 @@ public class PredictionLogService {
      * - Kickoff unknown: logged once on first sighting and never refreshed,
      *   with no market price, since we can't tell a pre-match price from an
      *   in-play one.
+     * - The first pre-kickoff scan with confirmed lineups also stores an
+     *   "at lineups" copy of the snapshot (see PredictionLogEntry).
      */
     public void recordSnapshot(String ticker, String matchTitle, String marketType, String matchDate,
                                double predictedProbability, Double baseProbability,
-                               Integer bidCents, Integer askCents, Optional<Instant> kickoff) {
+                               Integer bidCents, Integer askCents, Optional<Instant> kickoff,
+                               boolean lineupsConfirmed) {
         Instant now = nowSupplier.get();
         boolean beforeKickoff = kickoff.map(now::isBefore).orElse(false);
 
         lock.lock();
         try {
             PredictionLogEntry existing = entriesByTicker.get(ticker);
+            PredictionLogEntry updated;
             if (existing == null) {
                 if (kickoff.isPresent() && !beforeKickoff) return;
-                entriesByTicker.put(ticker, new PredictionLogEntry(
+                updated = new PredictionLogEntry(
                     ticker, matchTitle, marketType, matchDate, predictedProbability, baseProbability,
                     beforeKickoff ? bidCents : null, beforeKickoff ? askCents : null,
                     kickoff.map(Instant::toString).orElse(null),
-                    now.toString(), now.toString(), false, null
-                ));
-                persist();
-                return;
+                    now.toString(), now.toString(), false, null,
+                    null, null, null, null, null
+                );
+            } else {
+                if (existing.resolved() || !beforeKickoff) return;
+                updated = existing.withSnapshot(predictedProbability, baseProbability, bidCents, askCents, now.toString());
             }
 
-            if (existing.resolved() || !beforeKickoff) return;
-            entriesByTicker.put(ticker, existing.withSnapshot(predictedProbability, baseProbability, bidCents, askCents, now.toString()));
+            if (beforeKickoff && lineupsConfirmed && updated.lineupsSeenAt() == null) {
+                updated = updated.withLineupSnapshot();
+            }
+            entriesByTicker.put(ticker, updated);
             persist();
         } finally {
             lock.unlock();
@@ -170,13 +178,15 @@ public class PredictionLogService {
     }
 
     /**
-     * Our Brier score vs. the market's, on the same resolved markets (those
-     * with a usable pre-kickoff price). The standard error treats each match
-     * as one unit, since its home/tie/away markets aren't independent.
+     * The model we bet with (the base model, no lineup adjustment) vs. the
+     * market's price, on the same resolved markets with a usable pre-kickoff
+     * price.
      */
     public MarketComparison marketComparison() {
         List<PredictionLogEntry> resolved = resolvedEntries();
-        PairedScores scores = pairedScores(resolved, e -> e.marketMidProbability(MAX_USABLE_SPREAD_CENTS));
+        PairedScores scores = pairedScores(resolved,
+            e -> Optional.ofNullable(e.baseProbability()),
+            e -> e.marketMidProbability(MAX_USABLE_SPREAD_CENTS));
         return new MarketComparison(resolved.size(), scores.compared(),
             scores.modelBrier(), scores.otherBrier(), scores.standardError());
     }
@@ -188,12 +198,60 @@ public class PredictionLogService {
      */
     public LineupComparison lineupComparison() {
         List<PredictionLogEntry> resolved = resolvedEntries();
-        PairedScores scores = pairedScores(resolved, e -> Optional.ofNullable(e.baseProbability()));
+        PairedScores scores = pairedScores(resolved,
+            e -> Optional.of(e.predictedProbability()),
+            e -> Optional.ofNullable(e.baseProbability()));
         int adjusted = (int) resolved.stream()
             .filter(e -> e.baseProbability() != null && Math.abs(e.predictedProbability() - e.baseProbability()) > 1e-9)
             .count();
         return new LineupComparison(resolved.size(), scores.compared(), adjusted,
             scores.modelBrier(), scores.otherBrier(), scores.standardError());
+    }
+
+    /**
+     * Did Kalshi's price keep moving after lineups appeared, in the direction
+     * our lineup adjustment pointed? Doesn't need results - only the price at
+     * lineups and the last pre-kickoff price, so it fills in as soon as
+     * matches kick off.
+     */
+    public LineupSpeedReport lineupSpeedReport() {
+        Instant now = nowSupplier.get();
+        int withBothPrices = 0;
+        double absoluteMoveSum = 0.0;
+        int towardCount = 0;
+        int n = 0;
+        Map<String, Double> towardSumByMatch = new HashMap<>();
+        Map<String, Integer> countByMatch = new HashMap<>();
+
+        for (PredictionLogEntry e : allEntries()) {
+            if (e.lineupsSeenAt() == null || e.kickoff() == null || now.isBefore(Instant.parse(e.kickoff()))) continue;
+            if (!Instant.parse(e.snapshotAt()).isAfter(Instant.parse(e.lineupsSeenAt()))) continue;
+            Optional<Double> atLineups = e.marketMidProbabilityAtLineups(MAX_USABLE_SPREAD_CENTS);
+            Optional<Double> atKickoff = e.marketMidProbability(MAX_USABLE_SPREAD_CENTS);
+            if (atLineups.isEmpty() || atKickoff.isEmpty()) continue;
+
+            double moveCents = (atKickoff.get() - atLineups.get()) * 100;
+            withBothPrices++;
+            absoluteMoveSum += Math.abs(moveCents);
+
+            if (e.predictedProbabilityAtLineups() == null || e.baseProbabilityAtLineups() == null) continue;
+            double signal = e.predictedProbabilityAtLineups() - e.baseProbabilityAtLineups();
+            if (Math.abs(signal) < 0.01) continue;
+
+            double toward = Math.signum(signal) * moveCents;
+            if (toward > 0) towardCount++;
+            n++;
+            String match = matchKey(e.ticker());
+            towardSumByMatch.merge(match, toward, Double::sum);
+            countByMatch.merge(match, 1, Integer::sum);
+        }
+
+        double avgToward = n == 0 ? 0.0 : towardSumByMatch.values().stream().mapToDouble(Double::doubleValue).sum() / n;
+        return new LineupSpeedReport(withBothPrices, n,
+            CalibrationMath.round4(avgToward),
+            CalibrationMath.round4(clusteredStandardError(towardSumByMatch, countByMatch, n)),
+            n == 0 ? 0.0 : CalibrationMath.round4((double) towardCount / n),
+            withBothPrices == 0 ? 0.0 : CalibrationMath.round4(absoluteMoveSum / withBothPrices));
     }
 
     private List<PredictionLogEntry> resolvedEntries() {
@@ -204,12 +262,12 @@ public class PredictionLogService {
     }
 
     /**
-     * Brier score of our full-model prediction vs. some other probability,
-     * over the resolved entries where the other probability exists. The
-     * standard error treats each match as one unit, since its home/tie/away
-     * markets aren't independent.
+     * Brier score of one probability vs. another, over the resolved entries
+     * where both exist. The standard error treats each match as one unit,
+     * since its home/tie/away markets aren't independent.
      */
     private PairedScores pairedScores(List<PredictionLogEntry> resolved,
+                                      Function<PredictionLogEntry, Optional<Double>> modelProbability,
                                       Function<PredictionLogEntry, Optional<Double>> otherProbability) {
         List<PredictionRecord> modelRecords = new ArrayList<>();
         List<PredictionRecord> otherRecords = new ArrayList<>();
@@ -217,14 +275,15 @@ public class PredictionLogService {
         Map<String, Integer> countByMatch = new HashMap<>();
 
         for (PredictionLogEntry e : resolved) {
+            Optional<Double> model = modelProbability.apply(e);
             Optional<Double> other = otherProbability.apply(e);
-            if (other.isEmpty()) continue;
+            if (model.isEmpty() || other.isEmpty()) continue;
 
-            modelRecords.add(new PredictionRecord(e.matchDate(), e.matchTitle(), e.marketType(), e.predictedProbability(), e.actualOutcome()));
+            modelRecords.add(new PredictionRecord(e.matchDate(), e.matchTitle(), e.marketType(), model.get(), e.actualOutcome()));
             otherRecords.add(new PredictionRecord(e.matchDate(), e.matchTitle(), e.marketType(), other.get(), e.actualOutcome()));
 
             double y = e.actualOutcome() ? 1.0 : 0.0;
-            double diff = Math.pow(e.predictedProbability() - y, 2) - Math.pow(other.get() - y, 2);
+            double diff = Math.pow(model.get() - y, 2) - Math.pow(other.get() - y, 2);
             String match = matchKey(e.ticker());
             diffSumByMatch.merge(match, diff, Double::sum);
             countByMatch.merge(match, 1, Integer::sum);

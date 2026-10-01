@@ -3,22 +3,24 @@ package com.sports.analytics.kalshi_epl_engine;
 import java.util.Optional;
 
 /**
- * One market's prediction from the live app, using the FULL pipeline
- * including FotMob lineup/injury adjustments (which can't be reconstructed
- * for past matches, so this is the only way to validate that layer).
+ * One market's prediction from the live app, next to Kalshi's price.
  *
- * The prediction and Kalshi's bid/ask are captured together and refreshed on
- * every scan until kickoff, then frozen - so what's kept is our last
- * pre-kickoff view (after lineups are posted) next to the market's price at
- * that same moment. {@code resolved}/{@code actualOutcome} are filled in once
- * Kalshi settles the market.
+ * Two snapshots per market:
+ * - The main one is refreshed on every scan until kickoff, then frozen: our
+ *   last pre-kickoff view next to the market's last pre-kickoff price.
+ * - The "at lineups" one is taken once, the first scan after both confirmed
+ *   starting XIs appear. Comparing the two prices shows whether Kalshi was
+ *   still moving after lineups came out - i.e. whether reacting quickly to
+ *   lineups could beat the market.
+ *
+ * {@code resolved}/{@code actualOutcome} are filled in once Kalshi settles the market.
  *
  * @param predictedProbability full model, including lineup/injury adjustments
  * @param baseProbability      same model with lineup adjustments switched off
- *                             (null if it couldn't be computed)
- * @param marketBidCents/marketAskCents null when no quote was available, or
- *                                      when the kickoff time was unknown (the
- *                                      price might then be an in-play one)
+ *                             (the one recommendations use; null if not computed)
+ * @param marketBidCents       null when no quote was available, or when the
+ *                             kickoff time was unknown (could be an in-play price)
+ * @param lineupsSeenAt        when confirmed lineups were first seen (null if never, before kickoff)
  */
 public record PredictionLogEntry(
     String ticker,
@@ -33,17 +35,31 @@ public record PredictionLogEntry(
     String loggedAt,
     String snapshotAt,
     boolean resolved,
-    Boolean actualOutcome
+    Boolean actualOutcome,
+    String lineupsSeenAt,
+    Double predictedProbabilityAtLineups,
+    Double baseProbabilityAtLineups,
+    Integer marketBidCentsAtLineups,
+    Integer marketAskCentsAtLineups
 ) {
     public PredictionLogEntry withSnapshot(double predictedProbability, Double baseProbability,
                                            Integer bidCents, Integer askCents, String snapshotAt) {
         return new PredictionLogEntry(ticker, matchTitle, marketType, matchDate, predictedProbability, baseProbability,
-            bidCents, askCents, kickoff, loggedAt, snapshotAt, resolved, actualOutcome);
+            bidCents, askCents, kickoff, loggedAt, snapshotAt, resolved, actualOutcome,
+            lineupsSeenAt, predictedProbabilityAtLineups, baseProbabilityAtLineups, marketBidCentsAtLineups, marketAskCentsAtLineups);
+    }
+
+    /** Copies the current main snapshot into the "at lineups" snapshot. */
+    public PredictionLogEntry withLineupSnapshot() {
+        return new PredictionLogEntry(ticker, matchTitle, marketType, matchDate, predictedProbability, baseProbability,
+            marketBidCents, marketAskCents, kickoff, loggedAt, snapshotAt, resolved, actualOutcome,
+            snapshotAt, predictedProbability, baseProbability, marketBidCents, marketAskCents);
     }
 
     public PredictionLogEntry withResolution(boolean actualOutcome) {
         return new PredictionLogEntry(ticker, matchTitle, marketType, matchDate, predictedProbability, baseProbability,
-            marketBidCents, marketAskCents, kickoff, loggedAt, snapshotAt, true, actualOutcome);
+            marketBidCents, marketAskCents, kickoff, loggedAt, snapshotAt, true, actualOutcome,
+            lineupsSeenAt, predictedProbabilityAtLineups, baseProbabilityAtLineups, marketBidCentsAtLineups, marketAskCentsAtLineups);
     }
 
     /**
@@ -51,8 +67,17 @@ public record PredictionLogEntry(
      * was no two-sided quote or the spread was too wide to call it a price.
      */
     public Optional<Double> marketMidProbability(int maxSpreadCents) {
-        if (marketBidCents == null || marketAskCents == null) return Optional.empty();
-        if (marketAskCents <= marketBidCents || marketAskCents - marketBidCents > maxSpreadCents) return Optional.empty();
-        return Optional.of((marketBidCents + marketAskCents) / 200.0);
+        return midpoint(marketBidCents, marketAskCents, maxSpreadCents);
+    }
+
+    /** Same, for the price when lineups were first seen. */
+    public Optional<Double> marketMidProbabilityAtLineups(int maxSpreadCents) {
+        return midpoint(marketBidCentsAtLineups, marketAskCentsAtLineups, maxSpreadCents);
+    }
+
+    private static Optional<Double> midpoint(Integer bid, Integer ask, int maxSpreadCents) {
+        if (bid == null || ask == null) return Optional.empty();
+        if (ask <= bid || ask - bid > maxSpreadCents) return Optional.empty();
+        return Optional.of((bid + ask) / 200.0);
     }
 }

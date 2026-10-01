@@ -105,6 +105,15 @@ public class XgService {
             });
     }
 
+    /** True once FotMob has both teams' confirmed starting XIs for this fixture. */
+    public boolean lineupsConfirmed(String homeTeam, String awayTeam, Optional<LocalDate> matchDate) {
+        if (matchDate.isEmpty()) return false;
+        return lineupFormAdjustmentService.hasConfirmedLineup(homeTeam,
+                new LineupFormAdjustmentService.MatchContext(awayTeam, true, matchDate.get()))
+            && lineupFormAdjustmentService.hasConfirmedLineup(awayTeam,
+                new LineupFormAdjustmentService.MatchContext(homeTeam, false, matchDate.get()));
+    }
+
     /**
      * True only when both teams have live Understat-derived ratings available.
      */

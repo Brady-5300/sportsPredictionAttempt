@@ -256,7 +256,10 @@ public class UnderstatXgProvider {
             String player = stat.getPlayer();
             if (player == null) continue;
             playerMinutes.merge(player, stat.minutesPlayed(), Integer::sum);
-            playerIsDefensive.putIfAbsent(player, stat.isDefensivePosition());
+            // A substitute appearance is listed as position "Sub", which says nothing about the player's role.
+            if (!"Sub".equals(stat.getPosition())) {
+                playerIsDefensive.putIfAbsent(player, stat.isDefensivePosition());
+            }
         }
     }
 

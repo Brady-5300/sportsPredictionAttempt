@@ -35,7 +35,68 @@ class PredictionLogServiceTest {
 
     private void recordWithBase(PredictionLogService service, String ticker, double prob, Double base,
                                 Integer bid, Integer ask, Optional<Instant> kickoff) {
-        service.recordSnapshot(ticker, "Bournemouth vs Liverpool: Liverpool wins", "AWAY", "2026-09-20", prob, base, bid, ask, kickoff);
+        recordFull(service, ticker, prob, base, bid, ask, kickoff, false);
+    }
+
+    private void recordFull(PredictionLogService service, String ticker, double prob, Double base,
+                            Integer bid, Integer ask, Optional<Instant> kickoff, boolean lineupsConfirmed) {
+        service.recordSnapshot(ticker, "Bournemouth vs Liverpool: Liverpool wins", "AWAY", "2026-09-20",
+            prob, base, bid, ask, kickoff, lineupsConfirmed);
+    }
+
+    // === Lineup-speed measurement ===
+
+    @Test
+    void takesTheLineupSnapshotOnceWhenLineupsFirstAppear() {
+        PredictionLogService service = serviceAt(KICKOFF.minusSeconds(4 * 3600));
+        recordFull(service, TICKER, 0.50, 0.50, 49, 51, Optional.of(KICKOFF), false);
+
+        service.nowSupplier = () -> KICKOFF.minusSeconds(3600); // lineups out: striker benched
+        recordFull(service, TICKER, 0.47, 0.50, 48, 50, Optional.of(KICKOFF), true);
+
+        service.nowSupplier = () -> KICKOFF.minusSeconds(300); // market has since moved
+        recordFull(service, TICKER, 0.47, 0.50, 45, 47, Optional.of(KICKOFF), true);
+
+        PredictionLogEntry entry = service.allEntries().get(0);
+        assertEquals(KICKOFF.minusSeconds(3600).toString(), entry.lineupsSeenAt());
+        assertEquals(48, entry.marketBidCentsAtLineups());
+        assertEquals(0.47, entry.predictedProbabilityAtLineups());
+        assertEquals(0.50, entry.baseProbabilityAtLineups());
+        assertEquals(45, entry.marketBidCents()); // main snapshot keeps updating until kickoff
+    }
+
+    @Test
+    void measuresHowFarTheMarketMovesTowardOurLineupReadAfterLineupsAppear() {
+        PredictionLogService service = serviceAt(KICKOFF.minusSeconds(3600));
+        // Our lineup read says 3 points lower than without lineups; market at 49 mid.
+        recordFull(service, TICKER, 0.47, 0.50, 48, 50, Optional.of(KICKOFF), true);
+        // Market then drops to 46 mid by kickoff - a 3-cent move in our direction.
+        service.nowSupplier = () -> KICKOFF.minusSeconds(300);
+        recordFull(service, TICKER, 0.47, 0.50, 45, 47, Optional.of(KICKOFF), true);
+
+        service.nowSupplier = () -> KICKOFF.plusSeconds(60);
+        LineupSpeedReport report = service.lineupSpeedReport();
+
+        assertEquals(1, report.marketsWithBothPrices());
+        assertEquals(1, report.marketsWithSignal());
+        assertEquals(3.0, report.avgMoveTowardSignalCents(), 1e-9);
+        assertEquals(1.0, report.shareMovingTowardSignal(), 1e-9);
+    }
+
+    @Test
+    void speedReportWaitsUntilKickoffAndIgnoresTinySignals() {
+        PredictionLogService service = serviceAt(KICKOFF.minusSeconds(3600));
+        recordFull(service, TICKER, 0.498, 0.50, 48, 50, Optional.of(KICKOFF), true); // signal under 1 point
+        service.nowSupplier = () -> KICKOFF.minusSeconds(300);
+        recordFull(service, TICKER, 0.498, 0.50, 45, 47, Optional.of(KICKOFF), true);
+
+        assertEquals(0, service.lineupSpeedReport().marketsWithBothPrices()); // not kicked off yet
+
+        service.nowSupplier = () -> KICKOFF.plusSeconds(60);
+        LineupSpeedReport report = service.lineupSpeedReport();
+        assertEquals(1, report.marketsWithBothPrices());
+        assertEquals(0, report.marketsWithSignal());
+        assertEquals(3.0, report.avgAbsoluteMoveCents(), 1e-9);
     }
 
     private KalshiMarket settled(String result) {

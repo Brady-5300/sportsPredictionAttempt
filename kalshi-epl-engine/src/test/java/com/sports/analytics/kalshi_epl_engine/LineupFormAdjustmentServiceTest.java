@@ -9,6 +9,8 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -23,6 +25,17 @@ class LineupFormAdjustmentServiceTest {
 
     private static final TeamXgRating BASE = new TeamXgRating(2.0, 1.0, 6);
     private static final LocalDate MATCH_DATE = LocalDate.of(2026, 9, 20);
+    private static final double COEFFICIENT = 0.245 / 1.04;
+
+    // Saka: 2.0 xG in 360 minutes = 0.5 per 90, a quarter of the team's 2.0 attack rating.
+    private static final Map<String, PlayerXgContribution> SAKA_REGULAR = Map.of(
+        "Bukayo Saka", new PlayerXgContribution("Bukayo Saka", false, 2.0, 360)
+    );
+
+    /** Expected attack rating after losing attackers worth this much per-90 xG. */
+    private static double expectedFor(double missingPer90Xg) {
+        return BASE.avgXgFor() * Math.exp(-COEFFICIENT * missingPer90Xg / BASE.avgXgFor());
+    }
 
     private LineupFormAdjustmentService.MatchContext context(String opponent, boolean isHomeSide) {
         return new LineupFormAdjustmentService.MatchContext(opponent, isHomeSide, MATCH_DATE);
@@ -36,6 +49,14 @@ class LineupFormAdjustmentServiceTest {
         ));
     }
 
+    private TeamXgRating adjustWith(List<String> starters, List<FotMobUnavailablePlayer> unavailable,
+                                    Map<String, PlayerXgContribution> squad) {
+        stubTeams();
+        when(fotMobClient.fetchMatchLineups(5795459)).thenReturn(new FotMobMatchLineups(starters, unavailable, List.of(), List.of()));
+        when(understatXgProvider.getPlayerContributions("Arsenal")).thenReturn(squad);
+        return service.adjust("Arsenal", BASE, context("Fulham", true));
+    }
+
     @Test
     void passesRatingThroughUnchangedWhenNoContextGiven() {
         assertEquals(BASE, service.adjust("Arsenal", BASE));
@@ -44,168 +65,171 @@ class LineupFormAdjustmentServiceTest {
     @Test
     void passesRatingThroughUnchangedWhenTeamCannotBeResolved() {
         when(fotMobClient.resolveTeamId("Arsenal")).thenReturn(Optional.empty());
-
-        TeamXgRating result = service.adjust("Arsenal", BASE, context("Fulham", true));
-
-        assertEquals(BASE, result);
+        assertEquals(BASE, service.adjust("Arsenal", BASE, context("Fulham", true)));
     }
 
     @Test
     void passesRatingThroughUnchangedWhenFixtureCannotBeFound() {
         when(fotMobClient.resolveTeamId("Arsenal")).thenReturn(Optional.of(9825));
         when(fotMobClient.resolveTeamId("Fulham")).thenReturn(Optional.of(9879));
-        when(fotMobClient.fetchFixtures(9825)).thenReturn(List.of()); // no matching fixture
-
-        TeamXgRating result = service.adjust("Arsenal", BASE, context("Fulham", true));
-
-        assertEquals(BASE, result);
+        when(fotMobClient.fetchFixtures(9825)).thenReturn(List.of());
+        assertEquals(BASE, service.adjust("Arsenal", BASE, context("Fulham", true)));
     }
 
     // === Unavailable-list path (no confirmed lineup posted yet) ===
 
     @Test
-    void subtractsUnavailableAttackingPlayersMeasuredContribution() {
-        stubTeams();
-        when(fotMobClient.fetchMatchLineups(5795459)).thenReturn(new FotMobMatchLineups(
-            List.of(), // no confirmed lineup yet
-            List.of(new FotMobUnavailablePlayer("Bukayo Saka", "injury", "2 weeks")),
-            List.of(), List.of()
-        ));
-        when(understatXgProvider.getPlayerContributions("Arsenal")).thenReturn(Map.of(
-            "Bukayo Saka", new PlayerXgContribution("Bukayo Saka", false, 3.6, 360) // 0.9 xG per 90
-        ));
+    void reducesAttackByTheFittedAmountForAMissingRegularAttacker() {
+        TeamXgRating result = adjustWith(List.of(),
+            List.of(new FotMobUnavailablePlayer("Bukayo Saka", "injury", "2 weeks")), SAKA_REGULAR);
 
-        TeamXgRating result = service.adjust("Arsenal", BASE, context("Fulham", true));
-
-        assertEquals(BASE.avgXgFor() - 0.9, result.avgXgFor(), 0.0001);
+        assertEquals(expectedFor(0.5), result.avgXgFor(), 1e-9);
+        assertEquals(BASE.avgXgAgainst(), result.avgXgAgainst(), 1e-9);
     }
 
     @Test
-    void appliesFlatPenaltyForUnavailableDefensivePlayer() {
-        stubTeams();
-        when(fotMobClient.fetchMatchLineups(5795459)).thenReturn(new FotMobMatchLineups(
-            List.of(),
-            List.of(new FotMobUnavailablePlayer("William Saliba", "injury", "Mid October")),
-            List.of(), List.of()
-        ));
-        when(understatXgProvider.getPlayerContributions("Arsenal")).thenReturn(Map.of(
-            "William Saliba", new PlayerXgContribution("William Saliba", true, 0.1, 540)
-        ));
-
-        TeamXgRating result = service.adjust("Arsenal", BASE, context("Fulham", true));
-
-        assertEquals(BASE.avgXgAgainst() + 0.12, result.avgXgAgainst(), 0.0001);
-    }
-
-    @Test
-    void ignoresUnavailablePlayerThatCannotBeMatchedToAnyUnderstatData() {
-        stubTeams();
-        when(fotMobClient.fetchMatchLineups(5795459)).thenReturn(new FotMobMatchLineups(
-            List.of(),
-            List.of(new FotMobUnavailablePlayer("Completely Unknown Player", "injury", "Illness")),
-            List.of(), List.of()
-        ));
-        when(understatXgProvider.getPlayerContributions("Arsenal")).thenReturn(Map.of(
-            "Bukayo Saka", new PlayerXgContribution("Bukayo Saka", false, 0.9, 90)
-        ));
-
-        TeamXgRating result = service.adjust("Arsenal", BASE, context("Fulham", true));
+    void ignoresMissingDefendersSinceTheyShowedNoMeasurableEffect() {
+        TeamXgRating result = adjustWith(List.of(),
+            List.of(new FotMobUnavailablePlayer("William Saliba", "injury", "Late October 2026")),
+            Map.of("William Saliba", new PlayerXgContribution("William Saliba", true, 0.1, 540)));
 
         assertEquals(BASE, result);
     }
 
     @Test
+    void ignoresUnavailablePlayerThatCannotBeMatchedToAnyUnderstatData() {
+        TeamXgRating result = adjustWith(List.of(),
+            List.of(new FotMobUnavailablePlayer("Completely Unknown Player", "injury", "Illness")), SAKA_REGULAR);
+        assertEquals(BASE, result);
+    }
+
+    @Test
     void matchesUnavailablePlayerBySurnameWhenExactNameDiffers() {
-        stubTeams();
-        when(fotMobClient.fetchMatchLineups(5795459)).thenReturn(new FotMobMatchLineups(
-            List.of(),
-            List.of(new FotMobUnavailablePlayer("B. Saka", "injury", "2 weeks")),
-            List.of(), List.of()
-        ));
-        when(understatXgProvider.getPlayerContributions("Arsenal")).thenReturn(Map.of(
-            "Bukayo Saka", new PlayerXgContribution("Bukayo Saka", false, 0.9, 90)
-        ));
-
-        TeamXgRating result = service.adjust("Arsenal", BASE, context("Fulham", true));
-
-        assertEquals(BASE.avgXgFor() - 0.9, result.avgXgFor(), 0.0001);
+        TeamXgRating result = adjustWith(List.of(),
+            List.of(new FotMobUnavailablePlayer("B. Saka", "injury", "2 weeks")), SAKA_REGULAR);
+        assertEquals(expectedFor(0.5), result.avgXgFor(), 1e-9);
     }
 
     @Test
     void usesAwaySideDataWhenPlayingAway() {
         when(fotMobClient.resolveTeamId("Fulham")).thenReturn(Optional.of(9879));
         when(fotMobClient.resolveTeamId("Arsenal")).thenReturn(Optional.of(9825));
-        when(fotMobClient.fetchFixtures(9879)).thenReturn(List.of(
-            new FotMobFixture(5795459, 47, MATCH_DATE, false)
-        ));
+        when(fotMobClient.fetchFixtures(9879)).thenReturn(List.of(new FotMobFixture(5795459, 47, MATCH_DATE, false)));
         when(fotMobClient.fetchMatchLineups(5795459)).thenReturn(new FotMobMatchLineups(
             List.of(), List.of(),
-            List.of(), List.of(new FotMobUnavailablePlayer("Bernd Leno", "injury", "1 week"))
+            List.of(), List.of(new FotMobUnavailablePlayer("Raul Jimenez", "injury", "1 week"))
         ));
         when(understatXgProvider.getPlayerContributions("Fulham")).thenReturn(Map.of(
-            "Bernd Leno", new PlayerXgContribution("Bernd Leno", true, 0.0, 360)
+            "Raul Jimenez", new PlayerXgContribution("Raul Jimenez", false, 2.0, 360)
         ));
 
         TeamXgRating result = service.adjust("Fulham", BASE, context("Arsenal", false));
 
-        assertEquals(BASE.avgXgAgainst() + 0.12, result.avgXgAgainst(), 0.0001);
+        assertEquals(expectedFor(0.5), result.avgXgFor(), 1e-9);
+    }
+
+    @Test
+    void ignoresPlayersListedAsDoubtful() {
+        assertEquals(BASE, adjustWith(List.of(),
+            List.of(new FotMobUnavailablePlayer("Bukayo Saka", "injury", "Doubtful")), SAKA_REGULAR));
+    }
+
+    @Test
+    void ignoresPlayersExpectedBackBeforeTheMatch() {
+        // Match is 2026-09-20; "Early September 2026" means back from about Sep 1.
+        assertEquals(BASE, adjustWith(List.of(),
+            List.of(new FotMobUnavailablePlayer("Bukayo Saka", "injury", "Early September 2026")), SAKA_REGULAR));
+    }
+
+    @Test
+    void countsPlayersExpectedBackAfterTheMatch() {
+        TeamXgRating result = adjustWith(List.of(),
+            List.of(new FotMobUnavailablePlayer("Bukayo Saka", "injury", "Late October 2026")), SAKA_REGULAR);
+        assertEquals(expectedFor(0.5), result.avgXgFor(), 1e-9);
+    }
+
+    @Test
+    void onlyNearEverPresentPlayersCount() {
+        // 250 minutes vs. the squad's most-used player's 360 is under the 80% bar.
+        TeamXgRating result = adjustWith(List.of(),
+            List.of(new FotMobUnavailablePlayer("Rotation Player", "injury", "Late October 2026")), Map.of(
+                "David Raya", new PlayerXgContribution("David Raya", true, 0.0, 360),
+                "Rotation Player", new PlayerXgContribution("Rotation Player", false, 1.0, 250)
+            ));
+        assertEquals(BASE, result);
+    }
+
+    @Test
+    void multipleAbsencesCompoundButNeverDriveAttackToZero() {
+        TeamXgRating result = adjustWith(List.of(), List.of(
+                new FotMobUnavailablePlayer("Attacker One", "injury", "Late October 2026"),
+                new FotMobUnavailablePlayer("Attacker Two", "injury", "Late October 2026")),
+            Map.of(
+                "Attacker One", new PlayerXgContribution("Attacker One", false, 4.0, 360), // 1.0 per 90
+                "Attacker Two", new PlayerXgContribution("Attacker Two", false, 4.0, 360)  // 1.0 per 90
+            ));
+
+        // Losing the entire 2.0 attack rating's worth still only cuts it by ~21%.
+        assertEquals(expectedFor(2.0), result.avgXgFor(), 1e-9);
+        assertTrue(result.avgXgFor() > 1.5);
+    }
+
+    @Test
+    void parsesFotMobExpectedReturnText() {
+        assertEquals(Optional.of(LocalDate.of(2026, 10, 11)), LineupFormAdjustmentService.earliestReturnDate("Mid October 2026"));
+        assertEquals(Optional.of(LocalDate.of(2027, 4, 1)), LineupFormAdjustmentService.earliestReturnDate("Early April 2027"));
+        assertEquals(Optional.of(LocalDate.of(2026, 9, 21)), LineupFormAdjustmentService.earliestReturnDate("Late September 2026"));
+        assertTrue(LineupFormAdjustmentService.earliestReturnDate("2 weeks").isEmpty());
     }
 
     // === Confirmed starting XI path ===
 
     @Test
-    void subtractsRegularPlayerMissingFromConfirmedLineupEvenWhenNotListedUnavailable() {
-        stubTeams();
-        when(fotMobClient.fetchMatchLineups(5795459)).thenReturn(new FotMobMatchLineups(
-            List.of("David Raya", "William Saliba"), // confirmed XI - Saka not included (e.g. rested, not injured)
-            List.of(), // not flagged unavailable anywhere
-            List.of(), List.of()
-        ));
-        when(understatXgProvider.getPlayerContributions("Arsenal")).thenReturn(Map.of(
-            "Bukayo Saka", new PlayerXgContribution("Bukayo Saka", false, 3.6, 360),
+    void countsRegularMissingFromConfirmedLineupEvenWhenNotListedUnavailable() {
+        TeamXgRating result = adjustWith(List.of("David Raya", "William Saliba"), List.of(), Map.of(
+            "Bukayo Saka", new PlayerXgContribution("Bukayo Saka", false, 2.0, 360),
             "David Raya", new PlayerXgContribution("David Raya", true, 0.0, 360)
         ));
-
-        TeamXgRating result = service.adjust("Arsenal", BASE, context("Fulham", true));
-
-        assertEquals(BASE.avgXgFor() - 0.9, result.avgXgFor(), 0.0001);
+        assertEquals(expectedFor(0.5), result.avgXgFor(), 1e-9);
     }
 
     @Test
     void doesNotFlagFringePlayersMissingFromLineupAsAbsences() {
-        stubTeams();
-        when(fotMobClient.fetchMatchLineups(5795459)).thenReturn(new FotMobMatchLineups(
-            List.of("David Raya"), List.of(), List.of(), List.of()
-        ));
-        when(understatXgProvider.getPlayerContributions("Arsenal")).thenReturn(Map.of(
-            "Fringe Player", new PlayerXgContribution("Fringe Player", false, 0.1, 20) // well under the regular threshold
-        ));
-
-        TeamXgRating result = service.adjust("Arsenal", BASE, context("Fulham", true));
-
-        assertEquals(BASE, result);
+        assertEquals(BASE, adjustWith(List.of("David Raya"), List.of(), Map.of(
+            "David Raya", new PlayerXgContribution("David Raya", true, 0.0, 360),
+            "Fringe Player", new PlayerXgContribution("Fringe Player", false, 0.1, 20)
+        )));
     }
 
     @Test
     void ignoresUnavailableListOnceConfirmedLineupIsPosted() {
-        // Confirmed starters are the authoritative signal once posted - the unavailable
-        // list shouldn't be double-counted on top of it.
-        stubTeams();
-        when(fotMobClient.fetchMatchLineups(5795459)).thenReturn(new FotMobMatchLineups(
-            List.of("Bukayo Saka"), // Saka DID start
-            List.of(new FotMobUnavailablePlayer("Bukayo Saka", "doubtful", "n/a")), // stale/inaccurate doubt tag
-            List.of(), List.of()
-        ));
-        when(understatXgProvider.getPlayerContributions("Arsenal")).thenReturn(Map.of(
-            "Bukayo Saka", new PlayerXgContribution("Bukayo Saka", false, 3.6, 360)
-        ));
-
-        TeamXgRating result = service.adjust("Arsenal", BASE, context("Fulham", true));
-
-        assertEquals(BASE, result); // Saka started, so no adjustment despite being in "unavailable"
+        // Saka started, so no adjustment despite a stale "unavailable" entry.
+        assertEquals(BASE, adjustWith(List.of("Bukayo Saka"),
+            List.of(new FotMobUnavailablePlayer("Bukayo Saka", "doubtful", "n/a")), SAKA_REGULAR));
     }
 
-    // === Caching (politeness, not quota management) ===
+    @Test
+    void reportsWhetherTheConfirmedLineupIsPosted() {
+        stubTeams();
+        when(understatXgProvider.getPlayerContributions("Arsenal")).thenReturn(SAKA_REGULAR);
+        when(fotMobClient.fetchMatchLineups(5795459)).thenReturn(new FotMobMatchLineups(
+            List.of("Bukayo Saka"), List.of(), List.of(), List.of()));
+
+        assertTrue(service.hasConfirmedLineup("Arsenal", context("Fulham", true)));
+    }
+
+    @Test
+    void noConfirmedLineupWhileOnlyTheUnavailableListExists() {
+        stubTeams();
+        when(understatXgProvider.getPlayerContributions("Arsenal")).thenReturn(SAKA_REGULAR);
+        when(fotMobClient.fetchMatchLineups(5795459)).thenReturn(new FotMobMatchLineups(
+            List.of(), List.of(new FotMobUnavailablePlayer("Bukayo Saka", "injury", "2 weeks")), List.of(), List.of()));
+
+        assertFalse(service.hasConfirmedLineup("Arsenal", context("Fulham", true)));
+        assertFalse(service.hasConfirmedLineup("Arsenal", null));
+    }
+
+    // === Caching ===
 
     @Test
     void cachesWithinTtlAndDoesNotRefetch() {
@@ -221,15 +245,32 @@ class LineupFormAdjustmentServiceTest {
 
     @Test
     void refetchesAfterCacheExpires() {
-        Instant start = Instant.parse("2026-01-01T00:00:00Z");
+        Instant start = Instant.parse("2026-01-01T00:00:00Z"); // not match day: 30-minute cache
         service.nowSupplier = () -> start;
-
         stubTeams();
         when(fotMobClient.fetchMatchLineups(5795459)).thenReturn(FotMobMatchLineups.empty());
         when(understatXgProvider.getPlayerContributions("Arsenal")).thenReturn(Map.of());
 
         service.adjust("Arsenal", BASE, context("Fulham", true));
-        service.nowSupplier = () -> start.plusSeconds(31 * 60); // past the 30-minute TTL
+        service.nowSupplier = () -> start.plusSeconds(10 * 60);
+        service.adjust("Arsenal", BASE, context("Fulham", true));
+        verify(fotMobClient, times(1)).fetchFixtures(9825);
+
+        service.nowSupplier = () -> start.plusSeconds(31 * 60);
+        service.adjust("Arsenal", BASE, context("Fulham", true));
+        verify(fotMobClient, times(2)).fetchFixtures(9825);
+    }
+
+    @Test
+    void refreshesEveryScanOnMatchDaySoLineupsAreNoticedQuickly() {
+        Instant matchDayMorning = Instant.parse("2026-09-20T10:00:00Z");
+        service.nowSupplier = () -> matchDayMorning;
+        stubTeams();
+        when(fotMobClient.fetchMatchLineups(5795459)).thenReturn(FotMobMatchLineups.empty());
+        when(understatXgProvider.getPlayerContributions("Arsenal")).thenReturn(Map.of());
+
+        service.adjust("Arsenal", BASE, context("Fulham", true));
+        service.nowSupplier = () -> matchDayMorning.plusSeconds(5 * 60); // next scan
         service.adjust("Arsenal", BASE, context("Fulham", true));
 
         verify(fotMobClient, times(2)).fetchFixtures(9825);

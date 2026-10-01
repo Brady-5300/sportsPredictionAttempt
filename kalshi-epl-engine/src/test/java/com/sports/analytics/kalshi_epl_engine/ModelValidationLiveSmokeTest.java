@@ -28,7 +28,7 @@ class ModelValidationLiveSmokeTest {
         XgService xgService = new XgService(resolver, understatXgProvider, lineupService);
 
         KalshiHistoricalClient historicalClient = new KalshiHistoricalClient();
-        PredictionLogService predictionLogService = new PredictionLogService(historicalClient);
+        PredictionLogService predictionLogService = new PredictionLogService(historicalClient, java.nio.file.Path.of("target", "smoke-prediction-log.jsonl"));
         KalshiMarketService kalshiMarketService = new KalshiMarketService(poissonModel, tickerParserService, xgService, healthMonitor, predictionLogService);
 
         ModelValidationService validation = new ModelValidationService(historicalClient, tickerParserService, understatXgProvider, poissonModel, kalshiMarketService);

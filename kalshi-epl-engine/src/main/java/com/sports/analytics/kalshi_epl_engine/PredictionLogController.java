@@ -47,4 +47,10 @@ public class PredictionLogController {
     public LineupComparison lineupEffect() {
         return predictionLogService.lineupComparison();
     }
+
+    /** Whether Kalshi's price kept moving toward our lineup read after lineups appeared. */
+    @GetMapping("/lineup-speed")
+    public LineupSpeedReport lineupSpeed() {
+        return predictionLogService.lineupSpeedReport();
+    }
 }

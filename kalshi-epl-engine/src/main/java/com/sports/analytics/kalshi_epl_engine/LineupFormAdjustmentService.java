@@ -4,6 +4,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.Month;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
@@ -12,50 +13,51 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
- * Adjusts a team's base Understat xG rating for confirmed missing players.
+ * Adjusts a team's base Understat xG rating for missing regular starters.
  *
- * Two FotMob signals, used together:
- * 1. Unavailable list (injuries/suspensions) - populated well before kickoff.
- * 2. Confirmed starting XI (usually only posted ~1 hour before kickoff): any
- *    player who's normally a regular (per Understat minutes) but isn't in the
- *    posted XI is treated as missing too, whatever the reason (rotation
- *    included) - a more complete signal than the unavailable list alone.
+ * Two FotMob signals:
+ * 1. Confirmed starting XI (usually posted ~1 hour before kickoff): any
+ *    near-ever-present player not in the XI counts as missing, whatever the
+ *    reason (rotation included).
+ * 2. Before that, the unavailable list (injuries/suspensions), ignoring
+ *    players marked doubtful or expected back by matchday.
  *
- * Either way, "how much does missing this player matter" is estimated from
- * their own recent per-90 xG contribution (computed from Understat shot data,
- * see UnderstatXgProvider.getPlayerContributions) for attackers/midfielders,
- * and a flat xG-against penalty for missing GK/defenders (shot data alone
- * doesn't give a clean defensive-contribution metric).
+ * The size of the effect was fitted on ~1,100 past matches (2022-24) using
+ * Understat's records of who actually started, and checked on ~420 later
+ * ones: losing attackers who produce a share S of the team's xG cuts its
+ * expected goals by about exp(-0.245 * S). Missing defenders showed no
+ * measurable effect, so they're ignored. The whole effect is small (about
+ * 0.001 Brier on held-out matches), so recommendations don't use this layer
+ * - it's logged to measure whether Kalshi prices react slowly to lineups.
  *
- * FotMob's API has no publisher-enforced request cap (unlike the RapidAPI
- * reseller this replaced, which was hard-capped at 100/month) - so caching
- * here is just to avoid redundant calls within a scan cycle and be a
- * reasonable citizen of someone else's free API, not quota management.
- *
- * If FotMob data isn't available (team not resolvable, request failure),
- * this passes the base Understat rating through unchanged rather than
- * failing the whole evaluation - it's a refinement layer, not a requirement
- * for "live data". Recent-form weighting is handled entirely by
- * UnderstatXgProvider's recency-decayed rolling window.
+ * If FotMob data isn't available, the base rating passes through unchanged.
  */
 @Service
 public class LineupFormAdjustmentService {
 
     private static final int ENGLISH_PREMIER_LEAGUE_ID = 47;
 
-    // Missing defensive players don't have a clean "goals prevented" stat from
-    // shot data alone, so each confirmed-out GK/DEF gets a flat xG-against bump
-    // instead of a per-player-measured one.
-    private static final double DEFENSIVE_ABSENCE_PENALTY = 0.12;
+    // Fitted effect on expected goals is exp(-0.245 * S); the rating enters
+    // the goals formula with exponent ~1.04 (see XgService), hence 0.245 / 1.04.
+    private static final double MISSING_ATTACK_COEFFICIENT = 0.245 / 1.04;
 
-    // A player averaging at least this many minutes over the Understat rolling
-    // window (out of up to ~540 for 6 games) counts as a "regular" whose absence
-    // from a confirmed lineup is worth flagging, rather than a fringe squad player.
-    private static final int REGULAR_STARTER_MINUTES_THRESHOLD = 270;
+    // Only near-ever-present players count: at least this share of the most
+    // minutes any squad player has in the window. A looser definition (50%)
+    // mostly picked up rotation and showed no measurable effect.
+    private static final double REGULAR_SHARE_OF_MAX_MINUTES = 0.8;
 
-    private static final long CACHE_TTL_SECONDS = 30 * 60; // 30 minutes - politeness, not quota management
+    // FotMob expected-return text like "Mid October 2026".
+    private static final Pattern EXPECTED_RETURN_PATTERN =
+        Pattern.compile("(?i)\\b(early|mid|late)\\s+([a-z]+)\\s+(\\d{4})\\b");
+
+    // Politeness toward FotMob - but on match day re-check every scan, so a
+    // posted lineup is noticed within minutes rather than up to half an hour late.
+    private static final long CACHE_TTL_SECONDS = 30 * 60;
+    private static final long MATCH_DAY_CACHE_TTL_SECONDS = 4 * 60;
 
     private final FotMobClient fotMobClient;
     private final UnderstatXgProvider understatXgProvider;
@@ -73,29 +75,39 @@ public class LineupFormAdjustmentService {
     }
 
     /**
-     * Adjusts the given base rating for confirmed missing players. Returns the
-     * base rating unchanged if FotMob data isn't available for this team or
-     * this specific fixture can't be found.
+     * Adjusts the given base rating for missing regulars. Returns the base
+     * rating unchanged if FotMob data isn't available for this team or this
+     * fixture can't be found.
      */
     public TeamXgRating adjust(String teamName, TeamXgRating base, MatchContext context) {
         if (context == null) {
             return base; // no fixture to look up - nothing to adjust
         }
-
-        String cacheKey = teamName + "|" + context.opponentTeamName() + "|" + context.matchDate();
-        CacheEntry cached = cache.get(cacheKey);
-        if (cached != null && !isExpired(cached)) {
-            return applyAdjustment(base, cached.missingAttackXg, cached.missingDefensiveCount);
-        }
-
-        Absences absences = computeAbsences(teamName, context);
-        cache.put(cacheKey, new CacheEntry(absences.missingAttackXg, absences.missingDefensiveCount, nowSupplier.get()));
-        return applyAdjustment(base, absences.missingAttackXg, absences.missingDefensiveCount);
+        double missingAttackXg = absences(teamName, context).missingAttackXg();
+        double share = base.avgXgFor() > 0 ? missingAttackXg / base.avgXgFor() : 0.0;
+        double adjustedFor = base.avgXgFor() * Math.exp(-MISSING_ATTACK_COEFFICIENT * share);
+        return new TeamXgRating(adjustedFor, base.avgXgAgainst(), base.matchesUsed());
     }
 
     /** Convenience overload for callers with no fixture context. */
     public TeamXgRating adjust(String teamName, TeamXgRating base) {
         return adjust(teamName, base, null);
+    }
+
+    /** True once FotMob has this team's confirmed starting XI for the fixture. */
+    public boolean hasConfirmedLineup(String teamName, MatchContext context) {
+        return context != null && absences(teamName, context).confirmedLineup();
+    }
+
+    private Absences absences(String teamName, MatchContext context) {
+        String cacheKey = teamName + "|" + context.opponentTeamName() + "|" + context.matchDate();
+        CacheEntry cached = cache.get(cacheKey);
+        if (cached != null && !isExpired(cached, context.matchDate())) {
+            return cached.absences();
+        }
+        Absences absences = computeAbsences(teamName, context);
+        cache.put(cacheKey, new CacheEntry(absences, nowSupplier.get()));
+        return absences;
     }
 
     private Absences computeAbsences(String teamName, MatchContext context) {
@@ -121,7 +133,7 @@ public class LineupFormAdjustmentService {
         Map<String, PlayerXgContribution> contributions = understatXgProvider.getPlayerContributions(teamName);
 
         return starters.isEmpty()
-            ? absencesFromUnavailableList(unavailable, contributions)
+            ? absencesFromUnavailableList(unavailable, contributions, context.matchDate())
             : absencesFromMissingRegulars(contributions, starters);
     }
 
@@ -135,48 +147,68 @@ public class LineupFormAdjustmentService {
         return Optional.empty();
     }
 
-    /** Any normally-regular player not confirmed in today's starting XI, whatever the reason. */
+    /** Any near-ever-present player not confirmed in today's starting XI, whatever the reason. */
     private Absences absencesFromMissingRegulars(Map<String, PlayerXgContribution> contributions, List<String> confirmedStarters) {
-        double missingAttackXg = 0.0;
-        int missingDefensiveCount = 0;
-
+        Absences absences = Absences.CONFIRMED_NONE;
         for (PlayerXgContribution contribution : contributions.values()) {
-            if (contribution.totalMinutes() < REGULAR_STARTER_MINUTES_THRESHOLD) continue; // not a regular anyway
+            if (!isRegular(contribution, contributions)) continue;
             if (isNameInList(contribution.playerName(), confirmedStarters)) continue; // started today
-
-            if (contribution.defensivePosition()) {
-                missingDefensiveCount++;
-            } else {
-                missingAttackXg += contribution.per90Xg();
-            }
+            absences = absences.plus(contribution);
         }
-
-        return new Absences(missingAttackXg, missingDefensiveCount);
+        return absences;
     }
 
     /** Falls back to FotMob's unavailable-player list when no confirmed lineup is posted yet. */
-    private Absences absencesFromUnavailableList(List<FotMobUnavailablePlayer> unavailable, Map<String, PlayerXgContribution> contributions) {
-        double missingAttackXg = 0.0;
-        int missingDefensiveCount = 0;
-
+    private Absences absencesFromUnavailableList(List<FotMobUnavailablePlayer> unavailable,
+                                                 Map<String, PlayerXgContribution> contributions,
+                                                 LocalDate matchDate) {
+        Absences absences = Absences.NONE;
         for (FotMobUnavailablePlayer player : unavailable) {
+            if (!isExpectedToMiss(player, matchDate)) continue;
+
             Optional<PlayerXgContribution> contribution = matchPlayer(player.name(), contributions);
             if (contribution.isEmpty()) continue; // can't confidently attribute an impact without matching to real data
+            if (!isRegular(contribution.get(), contributions)) continue;
 
-            if (contribution.get().defensivePosition()) {
-                missingDefensiveCount++;
-            } else {
-                missingAttackXg += contribution.get().per90Xg();
-            }
+            absences = absences.plus(contribution.get());
         }
-
-        return new Absences(missingAttackXg, missingDefensiveCount);
+        return absences;
     }
 
-    private TeamXgRating applyAdjustment(TeamXgRating base, double missingAttackXg, int missingDefensiveCount) {
-        double adjustedFor = Math.max(0.1, base.avgXgFor() - missingAttackXg);
-        double adjustedAgainst = Math.max(0.1, base.avgXgAgainst() + (missingDefensiveCount * DEFENSIVE_ABSENCE_PENALTY));
-        return new TeamXgRating(adjustedFor, adjustedAgainst, base.matchesUsed());
+    private boolean isRegular(PlayerXgContribution player, Map<String, PlayerXgContribution> squad) {
+        int maxMinutes = squad.values().stream().mapToInt(PlayerXgContribution::totalMinutes).max().orElse(0);
+        return maxMinutes > 0 && player.totalMinutes() >= REGULAR_SHARE_OF_MAX_MINUTES * maxMinutes;
+    }
+
+    /**
+     * FotMob lists players days or weeks ahead, including ones marked
+     * "Doubtful" or expected back before this match - those may well play,
+     * so only count players with no sign of returning by matchday.
+     */
+    static boolean isExpectedToMiss(FotMobUnavailablePlayer player, LocalDate matchDate) {
+        String expectedReturn = player.expectedReturn() == null ? "" : player.expectedReturn();
+        String type = player.type() == null ? "" : player.type();
+        if (expectedReturn.toLowerCase(Locale.ROOT).contains("doubtful") || type.toLowerCase(Locale.ROOT).contains("doubtful")) {
+            return false;
+        }
+        return earliestReturnDate(expectedReturn).map(returnDate -> returnDate.isAfter(matchDate)).orElse(true);
+    }
+
+    /** "Mid October 2026" -> 2026-10-11 (earliest day of that third of the month), if parseable. */
+    static Optional<LocalDate> earliestReturnDate(String expectedReturn) {
+        Matcher matcher = EXPECTED_RETURN_PATTERN.matcher(expectedReturn);
+        if (!matcher.find()) return Optional.empty();
+        try {
+            Month month = Month.valueOf(matcher.group(2).toUpperCase(Locale.ROOT));
+            int day = switch (matcher.group(1).toLowerCase(Locale.ROOT)) {
+                case "early" -> 1;
+                case "mid" -> 11;
+                default -> 21;
+            };
+            return Optional.of(LocalDate.of(Integer.parseInt(matcher.group(3)), month, day));
+        } catch (IllegalArgumentException e) {
+            return Optional.empty();
+        }
     }
 
     private boolean isNameInList(String playerName, List<String> names) {
@@ -223,14 +255,22 @@ public class LineupFormAdjustmentService {
         return parts.length == 0 ? fullName : parts[parts.length - 1];
     }
 
-    private boolean isExpired(CacheEntry entry) {
-        return ChronoUnit.SECONDS.between(entry.fetchedAt, nowSupplier.get()) > CACHE_TTL_SECONDS;
+    private boolean isExpired(CacheEntry entry, LocalDate matchDate) {
+        boolean matchDay = LocalDate.ofInstant(nowSupplier.get(), ZoneOffset.UTC).equals(matchDate);
+        long ttl = matchDay ? MATCH_DAY_CACHE_TTL_SECONDS : CACHE_TTL_SECONDS;
+        return ChronoUnit.SECONDS.between(entry.fetchedAt(), nowSupplier.get()) > ttl;
     }
 
-    private record Absences(double missingAttackXg, int missingDefensiveCount) {
-        static final Absences NONE = new Absences(0.0, 0);
+    /** Missing attackers' combined per-90 xG (defenders showed no measurable effect, so aren't counted). */
+    private record Absences(double missingAttackXg, boolean confirmedLineup) {
+        static final Absences NONE = new Absences(0.0, false);
+        static final Absences CONFIRMED_NONE = new Absences(0.0, true);
+
+        Absences plus(PlayerXgContribution player) {
+            return player.defensivePosition() ? this : new Absences(missingAttackXg + player.per90Xg(), confirmedLineup);
+        }
     }
 
-    private record CacheEntry(double missingAttackXg, int missingDefensiveCount, Instant fetchedAt) {
+    private record CacheEntry(Absences absences, Instant fetchedAt) {
     }
 }

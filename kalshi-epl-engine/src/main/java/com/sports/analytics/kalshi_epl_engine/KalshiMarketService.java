@@ -40,9 +40,8 @@ public class KalshiMarketService {
      * all - we never silently substitute static ratings for real data. If a
      * specific team just has no live data (e.g. not in our Understat mapping),
      * that market is skipped individually with a reason, rather than treated as
-     * an outage. If FotMob (the lineup/injury refinement layer) is offline,
-     * evaluation proceeds normally but with a warning that those adjustments
-     * weren't applied this scan.
+     * an outage. If FotMob (the lineup/injury layer) is offline, evaluation
+     * proceeds normally with a warning - recommendations don't depend on it.
      */
     public MarketScanResult evaluateLiveMarkets() {
         if (healthMonitor.isOffline(UnderstatScraperService.SOURCE)) {
@@ -89,10 +88,15 @@ public class KalshiMarketService {
 
                     Optional<LocalDate> matchDate = tickerParserService.parseMatchDateFromTicker(market.getTicker());
 
-                    Optional<Double> homeXG = xgService.calculateHomeXG(homeTeam, awayTeam, matchDate);
-                    Optional<Double> awayXG = xgService.calculateAwayXG(homeTeam, awayTeam, matchDate);
+                    // Recommendations use the base model (no lineup/injury adjustment):
+                    // it's the version validated on past seasons. The lineup-adjusted
+                    // version is only logged, until the log shows it actually helps.
+                    Optional<Double> homeXG = xgService.calculateHomeXG(homeTeam, awayTeam);
+                    Optional<Double> awayXG = xgService.calculateAwayXG(homeTeam, awayTeam);
+                    Optional<Double> lineupHomeXG = xgService.calculateHomeXG(homeTeam, awayTeam, matchDate);
+                    Optional<Double> lineupAwayXG = xgService.calculateAwayXG(homeTeam, awayTeam, matchDate);
 
-                    if (homeXG.isEmpty() || awayXG.isEmpty()) {
+                    if (homeXG.isEmpty() || awayXG.isEmpty() || lineupHomeXG.isEmpty() || lineupAwayXG.isEmpty()) {
                         skipped.add(new SkippedMarket(ticker, fullTitle, "No live xG data for " + homeTeam + " and/or " + awayTeam
                             + " (not in our Understat mapping, or no completed matches yet this season)."));
                         continue;
@@ -101,19 +105,12 @@ public class KalshiMarketService {
                     String marketType = resolveMarketType(market, rawTitle, homeTeam, awayTeam);
 
                     double modelProb = poissonModel.calculateMarketProbability(homeXG.get(), awayXG.get(), marketType);
-
-                    // Same model with lineup adjustments switched off, so the log can
-                    // measure whether the lineup layer helps on the exact same matches.
-                    Optional<Double> baseHomeXG = xgService.calculateHomeXG(homeTeam, awayTeam);
-                    Optional<Double> baseAwayXG = xgService.calculateAwayXG(homeTeam, awayTeam);
-                    Double baseProb = baseHomeXG.isPresent() && baseAwayXG.isPresent()
-                        ? poissonModel.calculateMarketProbability(baseHomeXG.get(), baseAwayXG.get(), marketType)
-                        : null;
+                    double lineupProb = poissonModel.calculateMarketProbability(lineupHomeXG.get(), lineupAwayXG.get(), marketType);
 
                     predictionLogService.recordSnapshot(ticker, fullTitle, marketType,
-                        matchDate.map(LocalDate::toString).orElse(""), modelProb, baseProb,
+                        matchDate.map(LocalDate::toString).orElse(""), lineupProb, modelProb,
                         market.yesBidCents().orElse(null), market.yesAskCents().orElse(null),
-                        market.estimatedKickoff());
+                        market.estimatedKickoff(), xgService.lineupsConfirmed(homeTeam, awayTeam, matchDate));
 
                     int priceCents = market.resolvePriceCents();
                     // Skip if there's truly no active market pricing available
@@ -169,7 +166,7 @@ public class KalshiMarketService {
 
     private String fotMobWarning() {
         return healthMonitor.isOffline(FotMobClient.SOURCE)
-            ? "FotMob scraper appears offline - lineup/injury adjustments were not applied this scan."
+            ? "FotMob scraper appears offline - lineup/injury data was not available this scan."
             : null;
     }
 
