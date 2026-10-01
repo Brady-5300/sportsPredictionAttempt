@@ -118,35 +118,37 @@ public class KalshiMarketService {
                         continue;
                     }
 
-                    double marketProb = priceCents / 100.0;
+                    // Buying YES costs the ask, not the bid, plus Kalshi's entry fee
+                    // (settlement is free).
+                    int buyPriceCents = market.yesAskCents().filter(ask -> ask > 0 && ask < 100).orElse(priceCents);
+                    int entryFeeCents = poissonModel.calculateKalshiFeeCents(buyPriceCents);
+                    double marketProb = buyPriceCents / 100.0;
 
-                    // Kalshi charges a trading fee on entry (settlement itself is free),
-                    // so a real trade needs to clear the market's implied probability by
-                    // more than the raw model edge suggests.
-                    int entryFeeCents = poissonModel.calculateKalshiFeeCents(priceCents);
-                    double entryFeeProb = entryFeeCents / 100.0;
+                    double edge = modelProb - marketProb - entryFeeCents / 100.0;
 
-                    double edge = modelProb - marketProb - entryFeeProb;
+                    // Only buying YES is evaluated - the NO side's price and fee are
+                    // never checked - so a negative edge means "don't buy", not "bet NO".
+                    String rec;
+                    if (edge > 0.03) {
+                        rec = "YES (Undervalued)";
+                    } else if (edge < -0.03) {
+                        rec = "AVOID";
+                    } else {
+                        rec = "FAIR VALUE";
+                    }
 
-                    double kellyWager = poissonModel.calculateKellyWagerPercent(modelProb, priceCents);
+                    double kellyWager = rec.startsWith("YES")
+                        ? poissonModel.calculateKellyWagerPercent(modelProb, buyPriceCents + entryFeeCents)
+                        : 0.0;
 
                     String modelStr = Math.round(modelProb * 10000.0) / 100.0 + "%";
                     String marketStr = Math.round(marketProb * 10000.0) / 100.0 + "%";
                     String edgeStr = Math.round(edge * 10000.0) / 100.0 + "%";
 
-                    String rec;
-                    if (edge > 0.03) {
-                        rec = "YES (Undervalued)";
-                    } else if (edge < -0.03) {
-                        rec = "NO (Overvalued)";
-                    } else {
-                        rec = "FAIR VALUE";
-                    }
-
                     results.add(new MarketEvaluation(
                         ticker,
                         fullTitle,
-                        priceCents,
+                        buyPriceCents,
                         modelStr,
                         marketStr,
                         edgeStr,

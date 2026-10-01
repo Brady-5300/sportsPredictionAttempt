@@ -280,7 +280,7 @@
 
   function badgeClass(rec) {
     if (rec && rec.startsWith('YES')) return 'badge-yes';
-    if (rec && rec.startsWith('NO')) return 'badge-no';
+    if (rec && rec.startsWith('AVOID')) return 'badge-no';
     return 'badge-fair';
   }
 
@@ -298,7 +298,7 @@
         </div>
         <div class="market-right">
           <div class="stat">
-            <div class="label">Price</div>
+            <div class="label">Buy at</div>
             <div class="value">${m.kalshiPriceCents}&cent;</div>
           </div>
           <div class="stat">
