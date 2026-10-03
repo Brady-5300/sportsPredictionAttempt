@@ -88,6 +88,76 @@ class UnderstatXgProviderTest {
         return (weightedSum + PRIOR_MATCHES * prior) / (weightSum + PRIOR_MATCHES);
     }
 
+    // === Opponent adjustment ===
+
+    /** One team's view of a match between two named teams. */
+    private UnderstatTeamMatch fixture(String id, String side, String isoDate, String homeTitle, String awayTitle) {
+        UnderstatTeamMatch match = completedMatchOn(id, side, isoDate);
+        match.setH(Map.of("title", homeTitle));
+        match.setA(Map.of("title", awayTitle));
+        return match;
+    }
+
+    @Test
+    void xgCreatedAgainstAStrongerDefenceCountsForMore() {
+        // Arsenal and Fulham each create 1.0 xG in their only match - Arsenal against
+        // Chelsea, Fulham against Brentford. Chelsea also kept a clean sheet against
+        // Brentford, so Chelsea's defence is the better one, and Arsenal's 1.0 should
+        // be worth more. Unadjusted, the two would be rated identically.
+        when(scraper.fetchLeagueTeamTitles(anyInt())).thenReturn(List.of("Arsenal", "Chelsea", "Fulham", "Brentford"));
+        when(scraper.fetchTeamMatches(eq("Arsenal"), anyInt())).thenReturn(List.of(
+            fixture("m1", "h", "2025-01-01", "Arsenal", "Chelsea")));
+        when(scraper.fetchTeamMatches(eq("Fulham"), anyInt())).thenReturn(List.of(
+            fixture("m2", "h", "2025-01-01", "Fulham", "Brentford")));
+        when(scraper.fetchTeamMatches(eq("Chelsea"), anyInt())).thenReturn(List.of(
+            fixture("m1", "a", "2025-01-01", "Arsenal", "Chelsea"),
+            fixture("m3", "h", "2025-01-08", "Chelsea", "Brentford")));
+        when(scraper.fetchTeamMatches(eq("Brentford"), anyInt())).thenReturn(List.of(
+            fixture("m2", "a", "2025-01-01", "Fulham", "Brentford"),
+            fixture("m3", "a", "2025-01-08", "Chelsea", "Brentford")));
+        stubMatch("m1", List.of(shotWithXg("A", 1.0)), List.of(shotWithXg("C", 0.5)), List.of(), List.of());
+        stubMatch("m2", List.of(shotWithXg("F", 1.0)), List.of(shotWithXg("B", 0.5)), List.of(), List.of());
+        stubMatch("m3", List.of(shotWithXg("C", 0.5)), List.of(), List.of(), List.of());
+
+        double arsenalAttack = provider.getRating("Arsenal").orElseThrow().avgXgFor();
+        double fulhamAttack = provider.getRating("Fulham").orElseThrow().avgXgFor();
+
+        assertTrue(arsenalAttack > fulhamAttack,
+            "1.0 xG against the better defence (" + arsenalAttack + ") should rate higher than against the worse one (" + fulhamAttack + ")");
+    }
+
+    @Test
+    void ratesTheWholeLeagueOnceAndReusesItForEveryTeam() {
+        when(scraper.fetchLeagueTeamTitles(anyInt())).thenReturn(List.of("Arsenal", "Fulham"));
+        when(scraper.fetchTeamMatches(eq("Arsenal"), anyInt())).thenReturn(List.of(
+            fixture("m1", "h", "2025-01-01", "Arsenal", "Fulham")));
+        when(scraper.fetchTeamMatches(eq("Fulham"), anyInt())).thenReturn(List.of(
+            fixture("m1", "a", "2025-01-01", "Arsenal", "Fulham")));
+        stubMatch("m1", List.of(), List.of(), List.of(), List.of());
+
+        provider.getRating("Arsenal");
+        provider.getRating("Fulham");
+        provider.getPlayerContributions("Fulham");
+
+        // Two seasons per team, fetched once for the whole league.
+        verify(scraper, times(2)).fetchTeamMatches(eq("Arsenal"), anyInt());
+        verify(scraper, times(2)).fetchTeamMatches(eq("Fulham"), anyInt());
+    }
+
+    @Test
+    void aTeamWithNoMatchesYetIsCachedAsHavingNoRating() {
+        // e.g. a promoted team before its first game - shouldn't trigger a full re-rate on every lookup.
+        when(scraper.fetchLeagueTeamTitles(anyInt())).thenReturn(List.of("Arsenal", "Coventry"));
+        when(scraper.fetchTeamMatches(eq("Arsenal"), anyInt())).thenReturn(List.of(completedMatch("1", "h")));
+        stubMatch("1", List.of(), List.of(), List.of(), List.of());
+
+        assertTrue(provider.getRating("Coventry").isEmpty());
+        assertTrue(provider.getRating("Coventry").isEmpty());
+        assertTrue(provider.getRating("Arsenal").isPresent());
+
+        verify(scraper, times(2)).fetchTeamMatches(eq("Coventry"), anyInt());
+    }
+
     @Test
     void returnsEmptyForTeamWithNoUnderstatSlug() {
         Optional<TeamXgRating> rating = provider.getRating("Some Newly Promoted Club");

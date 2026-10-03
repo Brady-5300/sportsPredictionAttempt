@@ -42,6 +42,10 @@ public class TeamNameResolver {
             case "whu", "west ham", "west ham united": return "west ham";
             case "wol", "wolves", "wolverhampton", "wolverhampton wanderers": return "wolverhampton";
             case "bur", "burnley": return "burnley";
+            case "lei", "leicester", "leicester city": return "leicester";
+            case "sou", "southampton": return "southampton";
+            case "lut", "luton", "luton town": return "luton";
+            case "shu", "sheffield united": return "sheffield united";
             default: return cleaned;
         }
     }
@@ -113,6 +117,10 @@ public class TeamNameResolver {
             case "west ham": return "West_Ham";
             case "wolverhampton": return "Wolverhampton_Wanderers";
             case "burnley": return "Burnley";
+            case "leicester": return "Leicester";
+            case "southampton": return "Southampton";
+            case "luton": return "Luton";
+            case "sheffield united": return "Sheffield_United";
             default: return null;
         }
     }

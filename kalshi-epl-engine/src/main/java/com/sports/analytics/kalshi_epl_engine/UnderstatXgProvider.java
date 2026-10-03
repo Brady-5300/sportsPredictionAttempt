@@ -9,23 +9,35 @@ import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.Set;
 import java.util.function.Supplier;
+import java.util.function.ToDoubleFunction;
 
 /**
- * Computes a team's recency-weighted xG-for/xG-against, and each of its
- * players' recent per-90 xG contribution, from its completed Understat
- * matches - using our own {@link ShotXgCalculator} rather than Understat's
- * precomputed xG values.
+ * Computes every team's recency-weighted, opponent-adjusted xG-for/xG-against
+ * ratings, and each team's players' recent per-90 xG contribution, from
+ * completed Understat matches - using our own {@link ShotXgCalculator} rather
+ * than Understat's precomputed xG values.
  *
  * Rating design (window, decay, cross-season history, shrinkage, promoted
- * prior) was chosen by scoring variants on held-out EPL seasons (fit on
- * 2020-23, tested on 2024-26): the old 6-match, current-season-only, 0.75
- * decay window was mostly noise and barely beat predicting league base rates
- * (~0.211 vs ~0.215 Brier), while this setup scores ~0.200.
+ * prior, opponent adjustment) was chosen by scoring variants on held-out EPL
+ * seasons (fit on 2020-23, tested on 2024-26, ~800 matches):
+ * - the original 6-match, current-season-only window: ~0.211 Brier
+ * - 30 matches across two seasons, shrunk toward a prior: 0.2002
+ * - plus opponent adjustment: 0.1994 (better in every test season; the
+ *   bookmakers' closing odds score 0.1983 on the same matches)
+ *
+ * Opponent adjustment: 1.5 xG created against a stingy defence counts for
+ * more than 1.5 xG against a leaky one. Each match's xG is scaled by how good
+ * the opponent is relative to the league average, and since opponents'
+ * ratings depend on their own opponents, the whole league is re-rated a few
+ * times until the numbers settle. That's why ratings are computed for the
+ * whole league at once, not one team at a time.
  */
 @Service
 public class UnderstatXgProvider {
@@ -45,17 +57,30 @@ public class UnderstatXgProvider {
     private static final double PROMOTED_PRIOR_XG_FOR = 1.14;
     private static final double PROMOTED_PRIOR_XG_AGAINST = 1.87;
 
+    // Re-rating passes for the opponent adjustment; the numbers settle well within this.
+    private static final int OPPONENT_ADJUSTMENT_ITERATIONS = 5;
+
     // Player contributions stay on a short, current-season-only window: they
     // drive lineup-absence detection, where last season's players (possibly
     // since transferred) or a 30-match minutes total would give wrong answers.
     private static final int PLAYER_WINDOW_MATCHES = 6;
 
     private static final long CACHE_TTL_SECONDS = 6 * 60 * 60; // 6 hours
+    private static final int AS_OF_CACHE_SIZE = 64;
 
     private final UnderstatScraperService scraper;
     private final ShotXgCalculator shotXgCalculator;
     private final TeamNameResolver teamNameResolver;
-    private final Map<String, CacheEntry> cache = new ConcurrentHashMap<>();
+
+    // Live league ratings, keyed by Understat slug, refreshed as a whole.
+    private LeagueSnapshot liveSnapshot;
+    // Point-in-time league ratings for backtesting, keyed by "as of" date.
+    private final Map<LocalDate, AsOfRatings> asOfCache = new LinkedHashMap<>(16, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<LocalDate, AsOfRatings> eldest) {
+            return size() > AS_OF_CACHE_SIZE;
+        }
+    };
 
     // Overridable in tests so cache expiry can be exercised without sleeping.
     Supplier<Instant> nowSupplier = Instant::now;
@@ -69,13 +94,15 @@ public class UnderstatXgProvider {
     }
 
     /**
-     * Returns this team's live recency-weighted xG rating (spanning this
-     * season and last), or empty if we don't have an Understat slug for the
-     * team or it has no completed EPL matches in either season (e.g. a
-     * promoted team before its first game).
+     * Returns this team's live rating (spanning this season and last), or
+     * empty if we don't have an Understat slug for the team or it has no
+     * completed EPL matches in either season (e.g. a promoted team before
+     * its first game).
      */
     public Optional<TeamXgRating> getRating(String teamName) {
-        return getOrCompute(teamName).rating;
+        String slug = teamNameResolver.getUnderstatSlug(teamName);
+        if (slug == null) return Optional.empty();
+        return Optional.ofNullable(liveSnapshot(slug).ratings().get(slug));
     }
 
     /**
@@ -85,58 +112,89 @@ public class UnderstatXgProvider {
      * available for this team.
      */
     public Map<String, PlayerXgContribution> getPlayerContributions(String teamName) {
-        return getOrCompute(teamName).playerContributions;
-    }
-
-    private CacheEntry getOrCompute(String teamName) {
         String slug = teamNameResolver.getUnderstatSlug(teamName);
-        if (slug == null) {
-            return CacheEntry.EMPTY;
-        }
-
-        CacheEntry cached = cache.get(slug);
-        if (cached != null && !isExpired(cached)) {
-            return cached;
-        }
-
-        CacheEntry computed = compute(slug);
-        cache.put(slug, computed);
-        return computed;
-    }
-
-    private boolean isExpired(CacheEntry entry) {
-        return ChronoUnit.SECONDS.between(entry.fetchedAt, nowSupplier.get()) > CACHE_TTL_SECONDS;
+        if (slug == null) return Map.of();
+        return liveSnapshot(slug).playerContributions().getOrDefault(slug, Map.of());
     }
 
     /**
      * Point-in-time version of {@link #getRating}, for backtesting: only
-     * considers matches strictly before {@code asOfDateExclusive}, so a
-     * backtest of a past match can never see results from after that match -
-     * the same rolling-window/recency-decay logic as the live rating, just
-     * computed as if "today" were back then. Not cached (each call is for a
-     * different historical date, so a time-based cache wouldn't help) and does
-     * not affect the live {@link #getRating} cache in any way.
+     * considers matches strictly before {@code asOfDateExclusive} (for every
+     * team, including opponents used in the adjustment), so a backtest of a
+     * past match can never see results from after that match.
      */
-    public Optional<TeamXgRating> getRatingAsOf(String teamName, LocalDate asOfDateExclusive) {
+    public synchronized Optional<TeamXgRating> getRatingAsOf(String teamName, LocalDate asOfDateExclusive) {
         String slug = teamNameResolver.getUnderstatSlug(teamName);
         if (slug == null) return Optional.empty();
 
-        return computeFromHistory(loadHistory(slug, seasonStartYearOf(asOfDateExclusive), asOfDateExclusive)).rating;
+        AsOfRatings cached = asOfCache.get(asOfDateExclusive);
+        if (cached == null || !cached.covered().contains(slug)) {
+            Set<String> covered = new LinkedHashSet<>();
+            Map<String, History> histories = loadHistories(seasonStartYearOf(asOfDateExclusive), asOfDateExclusive, slug, covered);
+            cached = new AsOfRatings(rateLeague(histories), covered);
+            asOfCache.put(asOfDateExclusive, cached);
+        }
+        return Optional.ofNullable(cached.ratings().get(slug));
     }
 
-    private CacheEntry compute(String slug) {
-        return computeFromHistory(loadHistory(slug, currentSeasonStartYear(), null));
+    /** @param covered every team this calculation looked at - including ones with no matches, and so no rating */
+    private record AsOfRatings(Map<String, TeamXgRating> ratings, Set<String> covered) {
+    }
+
+    private record LeagueSnapshot(Map<String, TeamXgRating> ratings,
+                                  Map<String, Map<String, PlayerXgContribution>> playerContributions,
+                                  Set<String> covered,
+                                  Instant fetchedAt) {
+    }
+
+    private synchronized LeagueSnapshot liveSnapshot(String requiredSlug) {
+        boolean fresh = liveSnapshot != null
+            && ChronoUnit.SECONDS.between(liveSnapshot.fetchedAt(), nowSupplier.get()) <= CACHE_TTL_SECONDS
+            && liveSnapshot.covered().contains(requiredSlug);
+        if (fresh) return liveSnapshot;
+
+        Set<String> covered = new LinkedHashSet<>();
+        Map<String, History> histories = loadHistories(currentSeasonStartYear(), null, requiredSlug, covered);
+        Map<String, Map<String, PlayerXgContribution>> contributions = new HashMap<>();
+        histories.forEach((slug, history) -> contributions.put(slug, computePlayerContributions(history.currentSeason())));
+        liveSnapshot = new LeagueSnapshot(rateLeague(histories), contributions, covered, nowSupplier.get());
+        return liveSnapshot;
+    }
+
+    // ---------------------------------------------------------------- history
+
+    /** One team's side of one match: our xG, their xG, and who they were (null if unknown to us). */
+    private record MatchXg(double xgFor, double xgAgainst, String opponentSlug) {
     }
 
     /**
-     * @param currentSeason  most-recent-first completed matches this season
-     * @param previousSeason most-recent-first completed matches from last season
-     *                       (empty for a promoted team)
+     * @param window        up to 30 most-recent-first matches with shot data, this season then last
+     * @param currentSeason most-recent-first completed matches this season (for player contributions)
+     * @param promoted      no EPL matches last season
      */
-    private record History(List<UnderstatTeamMatch> currentSeason, List<UnderstatTeamMatch> previousSeason) {
-        boolean promoted() {
-            return previousSeason.isEmpty();
+    private record History(List<MatchXg> window, List<UnderstatTeamMatch> currentSeason, boolean promoted) {
+    }
+
+    /**
+     * Histories for every team in the league this season and last (opponents
+     * need rating too), plus the required team. Fills {@code slugs} with every
+     * team looked at.
+     */
+    private Map<String, History> loadHistories(int season, LocalDate beforeExclusive, String requiredSlug, Set<String> slugs) {
+        slugs.add(requiredSlug);
+        for (int s : new int[]{season, season - 1}) {
+            for (String title : scraper.fetchLeagueTeamTitles(s)) {
+                String slug = teamNameResolver.getUnderstatSlug(title);
+                if (slug != null) slugs.add(slug);
+            }
         }
+
+        Map<String, History> histories = new LinkedHashMap<>();
+        for (String slug : slugs) {
+            History history = loadHistory(slug, season, beforeExclusive);
+            if (!history.window().isEmpty()) histories.put(slug, history);
+        }
+        return histories;
     }
 
     private History loadHistory(String slug, int season, LocalDate beforeExclusive) {
@@ -156,7 +214,18 @@ public class UnderstatXgProvider {
             .filter(m -> m.getDatetime().compareTo(seasonStart) < 0)
             .toList();
 
-        return new History(current, previous);
+        List<MatchXg> window = new ArrayList<>();
+        List<UnderstatTeamMatch> all = new ArrayList<>(current);
+        all.addAll(previous);
+        for (UnderstatTeamMatch match : all) {
+            if (window.size() >= ROLLING_WINDOW_MATCHES) break;
+            Optional<TeamSideOfMatch> side = sideOf(match);
+            if (side.isEmpty()) continue;
+            String opponentTitle = "h".equals(match.getSide()) ? match.getAwayTeamTitle() : match.getHomeTeamTitle();
+            window.add(new MatchXg(sumXg(side.get().ourShots()), sumXg(side.get().theirShots()),
+                opponentTitle == null ? null : teamNameResolver.getUnderstatSlug(opponentTitle)));
+        }
+        return new History(window, current, previous.isEmpty());
     }
 
     private List<UnderstatTeamMatch> completedMostRecentFirst(List<UnderstatTeamMatch> matches) {
@@ -167,47 +236,58 @@ public class UnderstatXgProvider {
             .toList();
     }
 
-    private CacheEntry computeFromHistory(History history) {
-        List<UnderstatTeamMatch> window = new ArrayList<>(history.currentSeason());
-        window.addAll(history.previousSeason());
-        if (window.size() > ROLLING_WINDOW_MATCHES) {
-            window = window.subList(0, ROLLING_WINDOW_MATCHES);
-        }
+    // ---------------------------------------------------------------- ratings
 
+    /**
+     * Rates every team: first from raw xG, then repeatedly re-rates with each
+     * match's xG scaled by the opponent's current rating. A team with no real
+     * matches has no history entry, so it never gets a rating - the prior only
+     * shrinks real data, it never stands in for missing data.
+     */
+    private Map<String, TeamXgRating> rateLeague(Map<String, History> histories) {
+        Map<String, TeamXgRating> ratings = new HashMap<>();
+        histories.forEach((slug, history) -> ratings.put(slug, shrunkRating(history, m -> m.xgFor(), m -> m.xgAgainst())));
+
+        for (int iteration = 0; iteration < OPPONENT_ADJUSTMENT_ITERATIONS; iteration++) {
+            Map<String, TeamXgRating> previous = Map.copyOf(ratings);
+            histories.forEach((slug, history) -> ratings.put(slug, shrunkRating(history,
+                m -> {
+                    TeamXgRating opponent = m.opponentSlug() == null ? null : previous.get(m.opponentSlug());
+                    return opponent == null ? m.xgFor() : m.xgFor() * LEAGUE_AVERAGE_XG / opponent.avgXgAgainst();
+                },
+                m -> {
+                    TeamXgRating opponent = m.opponentSlug() == null ? null : previous.get(m.opponentSlug());
+                    return opponent == null ? m.xgAgainst() : m.xgAgainst() * LEAGUE_AVERAGE_XG / opponent.avgXgFor();
+                })));
+        }
+        return ratings;
+    }
+
+    private TeamXgRating shrunkRating(History history,
+                                      ToDoubleFunction<MatchXg> xgFor,
+                                      ToDoubleFunction<MatchXg> xgAgainst) {
         double weightedFor = 0.0;
         double weightedAgainst = 0.0;
         double weightSum = 0.0;
-        int counted = 0;
-
         // window is most-recent-first, so its list index IS how many matches
         // back this game is - index 0 gets full weight (decay^0 = 1.0).
-        for (int i = 0; i < window.size(); i++) {
-            Optional<TeamSideOfMatch> side = sideOf(window.get(i));
-            if (side.isEmpty()) continue;
-
+        for (int i = 0; i < history.window().size(); i++) {
+            MatchXg match = history.window().get(i);
             double weight = Math.pow(RECENCY_DECAY_FACTOR, i);
-            weightedFor += weight * sumXg(side.get().ourShots());
-            weightedAgainst += weight * sumXg(side.get().theirShots());
+            weightedFor += weight * xgFor.applyAsDouble(match);
+            weightedAgainst += weight * xgAgainst.applyAsDouble(match);
             weightSum += weight;
-            counted++;
-        }
-
-        // No real match data at all -> no rating. The prior only shrinks real
-        // data; it is never used on its own as a stand-in for missing data.
-        if (counted == 0) {
-            return new CacheEntry(Optional.empty(), Map.of(), nowSupplier.get());
         }
 
         double priorFor = history.promoted() ? PROMOTED_PRIOR_XG_FOR : LEAGUE_AVERAGE_XG;
         double priorAgainst = history.promoted() ? PROMOTED_PRIOR_XG_AGAINST : LEAGUE_AVERAGE_XG;
-        double shrunkFor = (weightedFor + PRIOR_PSEUDO_MATCHES * priorFor) / (weightSum + PRIOR_PSEUDO_MATCHES);
-        double shrunkAgainst = (weightedAgainst + PRIOR_PSEUDO_MATCHES * priorAgainst) / (weightSum + PRIOR_PSEUDO_MATCHES);
-
-        TeamXgRating rating = new TeamXgRating(shrunkFor, shrunkAgainst, counted);
-        Map<String, PlayerXgContribution> contributions = computePlayerContributions(history.currentSeason());
-
-        return new CacheEntry(Optional.of(rating), contributions, nowSupplier.get());
+        return new TeamXgRating(
+            (weightedFor + PRIOR_PSEUDO_MATCHES * priorFor) / (weightSum + PRIOR_PSEUDO_MATCHES),
+            (weightedAgainst + PRIOR_PSEUDO_MATCHES * priorAgainst) / (weightSum + PRIOR_PSEUDO_MATCHES),
+            history.window().size());
     }
+
+    // ---------------------------------------------------------------- players
 
     private Map<String, PlayerXgContribution> computePlayerContributions(List<UnderstatTeamMatch> currentSeason) {
         Map<String, Double> playerXgTotals = new HashMap<>();
@@ -297,10 +377,5 @@ public class UnderstatXgProvider {
     /** Seasons run July-June; a date before July belongs to the season that started the previous year. */
     static int seasonStartYearOf(LocalDate date) {
         return date.getMonthValue() >= 7 ? date.getYear() : date.getYear() - 1;
-    }
-
-    private record CacheEntry(Optional<TeamXgRating> rating, Map<String, PlayerXgContribution> playerContributions,
-                               Instant fetchedAt) {
-        static final CacheEntry EMPTY = new CacheEntry(Optional.empty(), Map.of(), Instant.EPOCH);
     }
 }

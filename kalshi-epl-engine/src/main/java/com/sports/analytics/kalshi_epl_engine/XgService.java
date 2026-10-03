@@ -71,20 +71,20 @@ public class XgService {
      * scored - i.e. the standard multiplicative model
      * goals = base * attack^a * defense^b * homeBoost. Fit with Newton's
      * method on 3,040 team-matches (EPL 2020-23) using UnderstatXgProvider's
-     * rating setup, then checked on held-out 2024-26 matches (Brier ~0.200).
-     * Rerun MatchXgModelCalibrationTest to recalibrate.
+     * opponent-adjusted ratings, then checked on ~800 held-out 2024-26
+     * matches (Brier 0.1994; bookmakers' closing odds 0.1983). Rerun
+     * MatchXgModelCalibrationTest to recalibrate.
      *
-     * The previous coefficients (0.13 attack / 0.10 defense on a linear
-     * scale) came from gradient descent that hadn't converged - they barely
-     * let ratings move predictions at all. Exponents near 1 here mean a team
-     * rated twice as dangerous really is predicted to score about twice as much.
-     * Package-private so ModelValidationService can reuse the exact same formula.
+     * Exponents near 1 mean a team rated twice as dangerous really is
+     * predicted to score about twice as much; home teams score about 19%
+     * more (exp(0.176)). Package-private so ModelValidationService can reuse
+     * the exact same formula.
      */
     static double combineAttackDefense(double attack, double defense, boolean isHome) {
-        double logRate = -0.427766
-            + 1.040119 * Math.log(Math.max(attack, 0.05))
-            + 0.851259 * Math.log(Math.max(defense, 0.05))
-            + 0.175887 * (isHome ? 1.0 : 0.0);
+        double logRate = -0.417
+            + 1.089 * Math.log(Math.max(attack, 0.05))
+            + 0.933 * Math.log(Math.max(defense, 0.05))
+            + 0.176 * (isHome ? 1.0 : 0.0);
         double xg = Math.exp(logRate);
         return Math.round(xg * 100.0) / 100.0;
     }

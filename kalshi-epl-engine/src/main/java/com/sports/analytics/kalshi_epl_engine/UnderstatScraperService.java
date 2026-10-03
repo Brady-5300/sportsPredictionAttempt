@@ -56,9 +56,37 @@ public class UnderstatScraperService {
     private record CachedTeamMatches(List<UnderstatTeamMatch> matches, Instant fetchedAt) {
     }
     private final ConcurrentHashMap<String, CachedTeamMatches> teamMatchesCache = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Integer, List<String>> leagueTeamsCache = new ConcurrentHashMap<>();
 
     public UnderstatScraperService(ScraperHealthMonitor healthMonitor) {
         this.healthMonitor = healthMonitor;
+    }
+
+    /**
+     * Names of every team in the EPL for a season (Understat titles, e.g.
+     * "Wolverhampton Wanderers"). Cached permanently once fetched - a season's
+     * teams don't change - and never cached on failure.
+     */
+    public List<String> fetchLeagueTeamTitles(int season) {
+        List<String> cached = leagueTeamsCache.get(season);
+        if (cached != null) return cached;
+
+        String url = BASE_URL + "/getLeagueData/EPL/" + season;
+        try {
+            JsonNode teams = objectMapper.readTree(getAsAjax(url)).path("teams");
+            List<String> titles = new ArrayList<>();
+            for (JsonNode team : teams) {
+                String title = team.path("title").asString(null);
+                if (title != null) titles.add(title);
+            }
+            healthMonitor.recordSuccess(SOURCE);
+            if (!titles.isEmpty()) leagueTeamsCache.put(season, List.copyOf(titles));
+            return titles;
+        } catch (Exception e) {
+            System.err.println("[UNDERSTAT] Failed to fetch league teams for " + season + ": " + e.getMessage());
+            healthMonitor.recordFailure(SOURCE, e.getMessage());
+            return List.of();
+        }
     }
 
     /**
