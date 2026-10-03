@@ -278,6 +278,37 @@
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   }
 
+  function fmtKickoffTime(iso) {
+    return new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  }
+
+  function fmtMatchDay(iso) {
+    if (!iso) return 'Date TBD';
+    return new Date(iso).toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
+  }
+
+  // Evaluations arrive sorted by kickoff; group consecutive ones under a heading per day.
+  function renderMarketsByDay(evaluations) {
+    let html = '';
+    let currentDay = null;
+    let rows = [];
+    const flush = () => {
+      if (rows.length) html += '<div class="card-list">' + rows.join('') + '</div>';
+      rows = [];
+    };
+    for (const m of evaluations) {
+      const day = fmtMatchDay(m.kickoff);
+      if (day !== currentDay) {
+        flush();
+        html += '<div class="section-title">' + escapeHtml(day) + '</div>';
+        currentDay = day;
+      }
+      rows.push(renderMarketRow(m));
+    }
+    flush();
+    return html;
+  }
+
   function badgeClass(rec) {
     if (rec && rec.startsWith('YES')) return 'badge-yes';
     if (rec && rec.startsWith('AVOID')) return 'badge-no';
@@ -290,6 +321,7 @@
         <div class="market-left">
           <div class="market-title">${escapeHtml(m.title)}</div>
           <div class="market-meta">
+            ${m.kickoff ? `<span>${escapeHtml(fmtKickoffTime(m.kickoff))}</span>` : ''}
             <span class="ticker">${escapeHtml(m.ticker)}</span>
             <span>Model ${escapeHtml(m.modelProbability)}</span>
             <span>Market ${escapeHtml(m.marketProbability)}</span>
@@ -374,8 +406,7 @@
     let html = '';
 
     if (data.evaluations && data.evaluations.length > 0) {
-      html += '<div class="section-title">Markets</div>';
-      html += '<div class="card-list">' + data.evaluations.map(renderMarketRow).join('') + '</div>';
+      html += renderMarketsByDay(data.evaluations);
     } else {
       html += `
         <div class="empty-state">

@@ -10,11 +10,12 @@ public class MarketEvaluation {
     private String recommendation;
     private double recommendedWagerPercent;
     private String xgDataSource;
+    private String kickoff;
 
     public MarketEvaluation(String ticker, String title, int kalshiPriceCents,
                             String modelProbability, String marketProbability,
                             String edge, String recommendation, double recommendedWagerPercent,
-                            String xgDataSource) {
+                            String xgDataSource, String kickoff) {
         this.ticker = ticker;
         this.title = title;
         this.kalshiPriceCents = kalshiPriceCents;
@@ -24,6 +25,7 @@ public class MarketEvaluation {
         this.recommendation = recommendation;
         this.recommendedWagerPercent = recommendedWagerPercent;
         this.xgDataSource = xgDataSource;
+        this.kickoff = kickoff;
     }
 
     public String getTicker() { return ticker; }
@@ -35,6 +37,8 @@ public class MarketEvaluation {
     public String getRecommendation() { return recommendation; }
     public double getRecommendedWagerPercent() { return recommendedWagerPercent; }
     public String getXgDataSource() { return xgDataSource; }
+    /** ISO-8601 kickoff time (UTC), or null if Kalshi didn't provide one. */
+    public String getKickoff() { return kickoff; }
 
     @Override
     public String toString() {

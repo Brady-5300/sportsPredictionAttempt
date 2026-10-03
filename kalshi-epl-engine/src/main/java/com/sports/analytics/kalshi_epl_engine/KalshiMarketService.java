@@ -3,8 +3,10 @@ package com.sports.analytics.kalshi_epl_engine;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -154,7 +156,8 @@ public class KalshiMarketService {
                         edgeStr,
                         rec,
                         kellyWager,
-                        "understat-live"
+                        "understat-live",
+                        market.estimatedKickoff().map(Instant::toString).orElse(null)
                     ));
                 }
             }
@@ -163,6 +166,9 @@ public class KalshiMarketService {
             e.printStackTrace();
         }
 
+        // Chronological by kickoff (ISO-8601 UTC strings sort correctly as text), unknown kickoffs last.
+        results.sort(Comparator.comparing(MarketEvaluation::getKickoff, Comparator.nullsLast(Comparator.naturalOrder()))
+            .thenComparing(MarketEvaluation::getTicker));
         return MarketScanResult.ok(fotMobWarning(), results, skipped);
     }
 
