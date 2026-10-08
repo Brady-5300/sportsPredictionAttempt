@@ -1,0 +1,12 @@
+# Render Blueprint: deploys the dashboard as a free web service.
+# In Render: New + -> Blueprint -> pick this repo.
+services:
+  - type: web
+    name: epl-engine
+    runtime: docker
+    plan: free
+    rootDir: kalshi-epl-engine
+    dockerfilePath: ./kalshi-epl-engine/Dockerfile
+    dockerContext: ./kalshi-epl-engine
+    healthCheckPath: /
+    autoDeployTrigger: commit
