@@ -229,6 +229,55 @@
     50% { opacity: 0.35; }
   }
 
+  .planner {
+    border: 1px solid var(--border-strong);
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 28px;
+  }
+  .planner-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .planner-head strong { display: block; font-size: 15px; }
+  .planner-head .hint { font-size: 12.5px; color: var(--text-secondary); }
+  .planner-form { display: flex; align-items: center; gap: 8px; }
+  .planner-form .dollar { position: relative; }
+  .planner-form .dollar span {
+    position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+    color: var(--text-secondary); font-size: 14px;
+  }
+  .planner-form input {
+    width: 120px;
+    padding: 7px 10px 7px 22px;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    font-size: 14px;
+    font-variant-numeric: tabular-nums;
+  }
+  .planner-form button {
+    border: none;
+    background: var(--green);
+    color: #fff;
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .planner-form button:disabled { opacity: 0.5; cursor: default; }
+  #plannerResult:not(:empty) { margin-top: 14px; }
+  .planner-summary {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-top: 10px;
+    line-height: 1.5;
+  }
+  .planner-summary strong { color: var(--text); }
+
   @media (max-width: 640px) {
     .market-row { flex-wrap: wrap; }
     .market-right { width: 100%; justify-content: space-between; }
@@ -266,6 +315,22 @@
       <span id="warningMessage"></span>
     </div>
   </div>
+
+  <section class="planner">
+    <div class="planner-head">
+      <div>
+        <strong>Weekend wager planner</strong>
+        <span class="hint">Splits a budget across this weekend's undervalued picks, more on bigger edges.</span>
+      </div>
+      <form class="planner-form" id="plannerForm">
+        <label class="dollar" for="budgetInput"><span>$</span>
+          <input type="number" id="budgetInput" min="1" step="1" placeholder="50" required aria-label="Weekend budget in dollars">
+        </label>
+        <button type="submit" id="plannerBtn">Suggest</button>
+      </form>
+    </div>
+    <div id="plannerResult"></div>
+  </section>
 
   <div id="content"></div>
 </main>
@@ -307,6 +372,64 @@
     }
     flush();
     return html;
+  }
+
+  const money = (n) => '$' + n.toFixed(2);
+
+  function renderPlanner(plan) {
+    if (!plan.picks.length) {
+      return `<div class="planner-summary">No undervalued picks for this weekend right now, so nothing to bet. Your ${money(plan.budgetDollars)} stays in your pocket.</div>`;
+    }
+    const rows = plan.picks.map(p => `
+      <div class="market-row">
+        <div class="market-left">
+          <div class="market-title">${escapeHtml(p.title)}</div>
+          <div class="market-meta">
+            <span>${escapeHtml(fmtMatchDay(p.kickoff))}, ${escapeHtml(fmtKickoffTime(p.kickoff))}</span>
+            <span>Model ${escapeHtml(p.modelProbability)}</span>
+            <span>Edge ${escapeHtml(p.edge)}</span>
+            <span>Buy at ${p.buyPriceCents}&cent; + ${p.feeCents}&cent; fee</span>
+          </div>
+        </div>
+        <div class="market-right">
+          <div class="stat"><div class="label">Share</div><div class="value">${p.sharePercent.toFixed(1)}%</div></div>
+          <div class="stat"><div class="label">Contracts</div><div class="value">${p.contracts}</div></div>
+          <div class="stat"><div class="label">Cost</div><div class="value">${money(p.costDollars)}</div></div>
+          <div class="stat"><div class="label">Pays if wins</div><div class="value">${money(p.payoutDollars)}</div></div>
+        </div>
+      </div>`).join('');
+    const skipped = plan.picks.filter(p => p.contracts === 0).length;
+    return `
+      <div class="card-list">${rows}</div>
+      <div class="planner-summary">
+        Total cost <strong>${money(plan.costDollars)}</strong> of your ${money(plan.budgetDollars)}
+        (${money(plan.unspentDollars)} left over, since Kalshi only sells whole contracts${skipped ? `; ${skipped} pick${skipped > 1 ? 's' : ''} too small to buy even one` : ''}).
+        Picks cover kickoffs through ${escapeHtml(fmtMatchDay(plan.windowEnd))}. Prices move &mdash; check again right before buying.
+        These edges come from the model, which hasn't yet been shown to beat the market.
+      </div>`;
+  }
+
+  async function runPlanner(event) {
+    event.preventDefault();
+    const budget = parseFloat(document.getElementById('budgetInput').value);
+    const out = document.getElementById('plannerResult');
+    const btn = document.getElementById('plannerBtn');
+    if (!(budget > 0)) {
+      out.innerHTML = '<div class="planner-summary">Enter a dollar amount above zero.</div>';
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = 'Working…';
+    try {
+      const res = await fetch('/api/kalshi/allocate?budget=' + encodeURIComponent(budget));
+      const body = await res.json();
+      out.innerHTML = res.ok ? renderPlanner(body) : `<div class="planner-summary">${escapeHtml(body.error || 'Something went wrong.')}</div>`;
+    } catch (e) {
+      out.innerHTML = `<div class="planner-summary">Couldn't reach the app: ${escapeHtml(e.message)}</div>`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Suggest';
+    }
   }
 
   function badgeClass(rec) {
@@ -424,6 +547,7 @@
   }
 
   document.getElementById('refreshBtn').addEventListener('click', loadData);
+  document.getElementById('plannerForm').addEventListener('submit', runPlanner);
 
   loadData();
   refreshTimer = setInterval(loadData, REFRESH_INTERVAL_MS);
