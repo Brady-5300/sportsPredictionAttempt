@@ -804,7 +804,7 @@
           <span class="chip">Over 2.5 goals <strong>${pctOf(p.overTwoAndHalfGoals)}</strong></span>
         </div>
         <details class="tape">
-          <summary>Tale of the tape</summary>
+          <summary>More details</summary>
           <div class="tape-grid">
             ${tapeColumn(p.homeTeam, maxAttack, maxDefense)}
             ${tapeColumn(p.awayTeam, maxAttack, maxDefense)}
@@ -814,7 +814,7 @@
   }
 
   function renderPreviews(previews) {
-    let html = '<p class="explain" style="margin:0 0 16px">The model\'s view of every upcoming match. Ratings are expected goals (xG) per match, adjusted for opponent strength. Tap a match\'s "Tale of the tape" for form and top threats.</p>';
+    let html = '<p class="explain" style="margin:0 0 16px">The model\'s view of every upcoming match. Ratings are expected goals (xG) per match, adjusted for opponent strength. Tap "More details" on a match for form and top threats.</p>';
     let currentDay = null;
     for (const p of previews) {
       const day = fmtMatchDay(p.kickoff);
