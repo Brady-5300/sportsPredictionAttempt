@@ -18,10 +18,23 @@ public class MarketController {
 
     private final KalshiMarketService kalshiMarketService;
     private final WeekendAllocationService weekendAllocationService;
+    private final PreviewService previewService;
 
-    public MarketController(KalshiMarketService kalshiMarketService, WeekendAllocationService weekendAllocationService) {
+    public MarketController(KalshiMarketService kalshiMarketService, WeekendAllocationService weekendAllocationService,
+                            PreviewService previewService) {
         this.kalshiMarketService = kalshiMarketService;
         this.weekendAllocationService = weekendAllocationService;
+        this.previewService = previewService;
+    }
+
+    /** A preview for every upcoming match with an open Kalshi market. */
+    @GetMapping("/previews")
+    public ResponseEntity<?> previews() {
+        MarketScanResult scan = kalshiMarketService.evaluateLiveMarkets();
+        if (!MarketScanResult.STATUS_OK.equals(scan.status())) {
+            return ResponseEntity.status(503).body(Map.of("error", scan.message() == null ? "Data source offline." : scan.message()));
+        }
+        return ResponseEntity.ok(previewService.build(scan.evaluations()));
     }
 
     @GetMapping("/scan")

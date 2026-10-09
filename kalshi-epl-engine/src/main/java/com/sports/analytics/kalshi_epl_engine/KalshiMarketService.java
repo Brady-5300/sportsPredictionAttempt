@@ -157,7 +157,10 @@ public class KalshiMarketService {
                         rec,
                         kellyWager,
                         "understat-live",
-                        market.estimatedKickoff().map(Instant::toString).orElse(null)
+                        market.estimatedKickoff().map(Instant::toString).orElse(null),
+                        marketType,
+                        market.yesBidCents().orElse(null),
+                        market.yesAskCents().orElse(null)
                     ));
                 }
             }

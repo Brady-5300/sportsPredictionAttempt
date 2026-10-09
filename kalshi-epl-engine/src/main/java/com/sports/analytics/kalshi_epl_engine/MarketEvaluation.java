@@ -11,11 +11,15 @@ public class MarketEvaluation {
     private double recommendedWagerPercent;
     private String xgDataSource;
     private String kickoff;
+    private String marketType;
+    private Integer yesBidCents;
+    private Integer yesAskCents;
 
     public MarketEvaluation(String ticker, String title, int kalshiPriceCents,
                             String modelProbability, String marketProbability,
                             String edge, String recommendation, double recommendedWagerPercent,
-                            String xgDataSource, String kickoff) {
+                            String xgDataSource, String kickoff,
+                            String marketType, Integer yesBidCents, Integer yesAskCents) {
         this.ticker = ticker;
         this.title = title;
         this.kalshiPriceCents = kalshiPriceCents;
@@ -26,6 +30,9 @@ public class MarketEvaluation {
         this.recommendedWagerPercent = recommendedWagerPercent;
         this.xgDataSource = xgDataSource;
         this.kickoff = kickoff;
+        this.marketType = marketType;
+        this.yesBidCents = yesBidCents;
+        this.yesAskCents = yesAskCents;
     }
 
     public String getTicker() { return ticker; }
@@ -39,6 +46,11 @@ public class MarketEvaluation {
     public String getXgDataSource() { return xgDataSource; }
     /** ISO-8601 kickoff time (UTC), or null if Kalshi didn't provide one. */
     public String getKickoff() { return kickoff; }
+    /** "HOME", "TIE" or "AWAY". */
+    public String getMarketType() { return marketType; }
+    /** Best YES bid/ask in cents, or null if not quoted - their midpoint is the market's own probability. */
+    public Integer getYesBidCents() { return yesBidCents; }
+    public Integer getYesAskCents() { return yesAskCents; }
 
     @Override
     public String toString() {

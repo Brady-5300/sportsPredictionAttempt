@@ -19,7 +19,7 @@ class WeekendAllocationServiceTest {
 
     private MarketEvaluation market(String ticker, int priceCents, String recommendation, double kellyPercent, String kickoffUtc) {
         return new MarketEvaluation(ticker, ticker + " title", priceCents, "40%", priceCents + "%", "5%",
-            recommendation, kellyPercent, "understat-live", kickoffUtc);
+            recommendation, kellyPercent, "understat-live", kickoffUtc, "HOME", priceCents - 1, priceCents);
     }
 
     @Test

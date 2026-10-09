@@ -50,6 +50,26 @@ public class PoissonModel {
         }
     }
 
+    /**
+     * Probability of every exact score from 0-0 to maxGoals-maxGoals, normalised
+     * to sum to 1 - grid[home][away]. Uses the same independent-Poisson model as
+     * {@link #calculateMarketProbability}, so its win/draw/loss totals match.
+     */
+    public double[][] scorelineProbabilities(double homeXG, double awayXG, int maxGoals) {
+        double[][] grid = new double[maxGoals + 1][maxGoals + 1];
+        double total = 0.0;
+        for (int i = 0; i <= maxGoals; i++) {
+            for (int j = 0; j <= maxGoals; j++) {
+                grid[i][j] = poissonProbability(i, homeXG) * poissonProbability(j, awayXG);
+                total += grid[i][j];
+            }
+        }
+        for (double[] row : grid) {
+            for (int j = 0; j < row.length; j++) row[j] /= total;
+        }
+        return grid;
+    }
+
     private double poissonProbability(int k, double lambda) {
         return (Math.pow(lambda, k) * Math.exp(-lambda)) / factorial(k);
     }
