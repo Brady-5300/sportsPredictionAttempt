@@ -65,8 +65,6 @@ public class UnderstatXgProvider {
     // since transferred) or a 30-match minutes total would give wrong answers.
     private static final int PLAYER_WINDOW_MATCHES = 6;
 
-    // How many recent matches to keep for match previews' form guide.
-    private static final int RECENT_FORM_MATCHES = 5;
 
     private static final long CACHE_TTL_SECONDS = 6 * 60 * 60; // 6 hours
     private static final int AS_OF_CACHE_SIZE = 64;
@@ -125,22 +123,55 @@ public class UnderstatXgProvider {
                               double xgFor, double xgAgainst) {
     }
 
-    /** This team's most recent completed matches (most recent first), up to {@code count}. */
+    /**
+     * A team's plain numbers for this season only - unlike its rating, which
+     * also uses last season and adjusts for opponents. For showing people.
+     */
+    public record SeasonStats(int played, int wins, int draws, int losses, int goalsFor, int goalsAgainst,
+                              double xgForPerMatch, double xgAgainstPerMatch) {
+        static Optional<SeasonStats> of(List<RecentMatch> matches) {
+            if (matches.isEmpty()) return Optional.empty();
+            int wins = 0, draws = 0, losses = 0, goalsFor = 0, goalsAgainst = 0;
+            double xgFor = 0, xgAgainst = 0;
+            for (RecentMatch m : matches) {
+                xgFor += m.xgFor();
+                xgAgainst += m.xgAgainst();
+                if (m.goalsFor() == null || m.goalsAgainst() == null) continue;
+                goalsFor += m.goalsFor();
+                goalsAgainst += m.goalsAgainst();
+                if (m.goalsFor() > m.goalsAgainst()) wins++;
+                else if (m.goalsFor() < m.goalsAgainst()) losses++;
+                else draws++;
+            }
+            int n = matches.size();
+            return Optional.of(new SeasonStats(n, wins, draws, losses, goalsFor, goalsAgainst,
+                Math.round(xgFor / n * 100) / 100.0, Math.round(xgAgainst / n * 100) / 100.0));
+        }
+    }
+
+    /** This team's most recent matches THIS season (most recent first), up to {@code count}. */
     public List<RecentMatch> getRecentForm(String teamName, int count) {
         String slug = teamNameResolver.getUnderstatSlug(teamName);
         if (slug == null) return List.of();
-        List<RecentMatch> form = liveSnapshot(slug).recentForm().getOrDefault(slug, List.of());
-        return form.subList(0, Math.min(count, form.size()));
+        List<RecentMatch> season = liveSnapshot(slug).seasonMatches().getOrDefault(slug, List.of());
+        return season.subList(0, Math.min(count, season.size()));
     }
 
-    /** Live ratings for every team in this season's league, keyed by Understat slug - for ranking teams. */
-    public Map<String, TeamXgRating> getCurrentLeagueRatings() {
-        Map<String, TeamXgRating> result = new LinkedHashMap<>();
+    /** This team's numbers for this season only, or empty before its first match. */
+    public Optional<SeasonStats> getSeasonStats(String teamName) {
+        String slug = teamNameResolver.getUnderstatSlug(teamName);
+        if (slug == null) return Optional.empty();
+        return SeasonStats.of(liveSnapshot(slug).seasonMatches().getOrDefault(slug, List.of()));
+    }
+
+    /** This season's numbers for every team in the league, keyed by Understat slug - for ranking teams. */
+    public Map<String, SeasonStats> getCurrentLeagueSeasonStats() {
+        Map<String, SeasonStats> result = new LinkedHashMap<>();
         for (String title : scraper.fetchLeagueTeamTitles(currentSeasonStartYear())) {
             String slug = teamNameResolver.getUnderstatSlug(title);
             if (slug == null) continue;
-            TeamXgRating rating = liveSnapshot(slug).ratings().get(slug);
-            if (rating != null) result.put(slug, rating);
+            SeasonStats.of(liveSnapshot(slug).seasonMatches().getOrDefault(slug, List.of()))
+                .ifPresent(stats -> result.put(slug, stats));
         }
         return result;
     }
@@ -171,7 +202,7 @@ public class UnderstatXgProvider {
 
     private record LeagueSnapshot(Map<String, TeamXgRating> ratings,
                                   Map<String, Map<String, PlayerXgContribution>> playerContributions,
-                                  Map<String, List<RecentMatch>> recentForm,
+                                  Map<String, List<RecentMatch>> seasonMatches,
                                   Set<String> covered,
                                   Instant fetchedAt) {
     }
@@ -185,24 +216,31 @@ public class UnderstatXgProvider {
         Set<String> covered = new LinkedHashSet<>();
         Map<String, History> histories = loadHistories(currentSeasonStartYear(), null, requiredSlug, covered);
         Map<String, Map<String, PlayerXgContribution>> contributions = new HashMap<>();
-        Map<String, List<RecentMatch>> recentForm = new HashMap<>();
+        Map<String, List<RecentMatch>> seasonMatches = new HashMap<>();
         histories.forEach((slug, history) -> {
             contributions.put(slug, computePlayerContributions(history.currentSeason()));
-            recentForm.put(slug, history.window().stream().limit(RECENT_FORM_MATCHES).map(MatchXg::recent).toList());
+            seasonMatches.put(slug, history.currentSeason().stream()
+                .map(this::recentMatch).flatMap(Optional::stream).toList());
         });
-        liveSnapshot = new LeagueSnapshot(rateLeague(histories), contributions, recentForm, covered, nowSupplier.get());
+        liveSnapshot = new LeagueSnapshot(rateLeague(histories), contributions, seasonMatches, covered, nowSupplier.get());
         return liveSnapshot;
     }
 
     // ---------------------------------------------------------------- history
 
-    /** One team's side of one match: our xG, their xG, who they were (slug null if unknown to us), and the score. */
-    private record MatchXg(double xgFor, double xgAgainst, String opponentSlug,
-                           String date, String opponentTitle, boolean home, Integer goalsFor, Integer goalsAgainst) {
-        RecentMatch recent() {
-            return new RecentMatch(date, opponentTitle, home, goalsFor, goalsAgainst,
-                Math.round(xgFor * 100) / 100.0, Math.round(xgAgainst * 100) / 100.0);
-        }
+    /** One team's side of one match: our xG, their xG, and who they were (null if unknown to us). */
+    private record MatchXg(double xgFor, double xgAgainst, String opponentSlug) {
+    }
+
+    /** A completed match as shown to people: score, opponent and both sides' xG. Empty without shot data. */
+    private Optional<RecentMatch> recentMatch(UnderstatTeamMatch match) {
+        return sideOf(match).map(side -> new RecentMatch(
+            match.getDatetime().substring(0, 10),
+            "h".equals(match.getSide()) ? match.getAwayTeamTitle() : match.getHomeTeamTitle(),
+            "h".equals(match.getSide()),
+            match.getOwnGoals(), match.getOpponentGoals(),
+            Math.round(sumXg(side.ourShots()) * 100) / 100.0,
+            Math.round(sumXg(side.theirShots()) * 100) / 100.0));
     }
 
     /**
@@ -261,9 +299,7 @@ public class UnderstatXgProvider {
             if (side.isEmpty()) continue;
             String opponentTitle = "h".equals(match.getSide()) ? match.getAwayTeamTitle() : match.getHomeTeamTitle();
             window.add(new MatchXg(sumXg(side.get().ourShots()), sumXg(side.get().theirShots()),
-                opponentTitle == null ? null : teamNameResolver.getUnderstatSlug(opponentTitle),
-                match.getDatetime().substring(0, 10), opponentTitle, "h".equals(match.getSide()),
-                match.getOwnGoals(), match.getOpponentGoals()));
+                opponentTitle == null ? null : teamNameResolver.getUnderstatSlug(opponentTitle)));
         }
         return new History(window, current, previous.isEmpty());
     }

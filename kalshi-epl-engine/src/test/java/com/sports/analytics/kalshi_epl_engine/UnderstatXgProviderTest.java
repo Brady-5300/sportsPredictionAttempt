@@ -88,6 +88,61 @@ class UnderstatXgProviderTest {
         return (weightedSum + PRIOR_MATCHES * prior) / (weightSum + PRIOR_MATCHES);
     }
 
+    // === This-season stats for match previews ===
+
+    @Test
+    void seasonStatsAndFormUseOnlyThisSeasonsMatches() {
+        UnderstatTeamMatch win = fixture("c1", "h", "2025-01-01", "Arsenal", "Chelsea");
+        win.setGoals(Map.of("h", "2", "a", "0"));
+        UnderstatTeamMatch draw = fixture("c2", "a", "2025-01-08", "Fulham", "Arsenal");
+        draw.setGoals(Map.of("h", "1", "a", "1"));
+        UnderstatTeamMatch lastSeason = fixture("p1", "h", "2024-03-01", "Arsenal", "Everton");
+        lastSeason.setGoals(Map.of("h", "5", "a", "0"));
+        when(scraper.fetchTeamMatches("Arsenal", CURRENT_SEASON)).thenReturn(List.of(win, draw));
+        when(scraper.fetchTeamMatches("Arsenal", PREVIOUS_SEASON)).thenReturn(List.of(lastSeason));
+        stubMatch("c1", List.of(shotWithXg("A", 2.0)), List.of(shotWithXg("C", 0.4)), List.of(), List.of());
+        stubMatch("c2", List.of(shotWithXg("F", 1.0)), List.of(shotWithXg("A", 1.2)), List.of(), List.of());
+        stubMatch("p1", List.of(shotWithXg("A", 4.0)), List.of(), List.of(), List.of());
+
+        UnderstatXgProvider.SeasonStats stats = provider.getSeasonStats("Arsenal").orElseThrow();
+        assertEquals(2, stats.played());
+        assertEquals(1, stats.wins());
+        assertEquals(1, stats.draws());
+        assertEquals(3, stats.goalsFor());
+        assertEquals(1, stats.goalsAgainst());
+        assertEquals((2.0 + 1.2) / 2, stats.xgForPerMatch(), 1e-9);
+        assertEquals((0.4 + 1.0) / 2, stats.xgAgainstPerMatch(), 1e-9);
+
+        List<UnderstatXgProvider.RecentMatch> form = provider.getRecentForm("Arsenal", 5);
+        assertEquals(2, form.size()); // last season's 5-0 isn't included
+        assertEquals("Fulham", form.get(0).opponent());
+        assertFalse(form.get(0).home());
+        assertEquals(1.2, form.get(0).xgFor(), 1e-9);
+    }
+
+    @Test
+    void noSeasonStatsBeforeATeamsFirstMatchThisSeason() {
+        when(scraper.fetchTeamMatches("Arsenal", PREVIOUS_SEASON)).thenReturn(List.of(completedMatchOn("p1", "h", "2024-03-01")));
+        stubMatch("p1", List.of(), List.of(), List.of(), List.of());
+
+        assertTrue(provider.getSeasonStats("Arsenal").isEmpty());
+        assertTrue(provider.getRecentForm("Arsenal", 5).isEmpty());
+    }
+
+    @Test
+    void ranksOnlyThisSeasonsLeagueTeams() {
+        when(scraper.fetchLeagueTeamTitles(CURRENT_SEASON)).thenReturn(List.of("Arsenal", "Fulham"));
+        when(scraper.fetchTeamMatches(eq("Arsenal"), anyInt())).thenReturn(List.of(fixture("m1", "h", "2025-01-01", "Arsenal", "Fulham")));
+        when(scraper.fetchTeamMatches(eq("Fulham"), anyInt())).thenReturn(List.of(fixture("m1", "a", "2025-01-01", "Arsenal", "Fulham")));
+        stubMatch("m1", List.of(shotWithXg("A", 1.5)), List.of(shotWithXg("F", 0.5)), List.of(), List.of());
+
+        Map<String, UnderstatXgProvider.SeasonStats> league = provider.getCurrentLeagueSeasonStats();
+
+        assertEquals(2, league.size());
+        assertEquals(1.5, league.get("Arsenal").xgForPerMatch(), 1e-9);
+        assertEquals(0.5, league.get("Fulham").xgForPerMatch(), 1e-9);
+    }
+
     // === Opponent adjustment ===
 
     /** One team's view of a match between two named teams. */

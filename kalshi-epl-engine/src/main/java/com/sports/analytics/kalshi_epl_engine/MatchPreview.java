@@ -29,12 +29,15 @@ public record MatchPreview(
     }
 
     /**
-     * @param attack       opponent-adjusted xG created per match
-     * @param defense      opponent-adjusted xG conceded per match (lower is better)
-     * @param attackRank   1 = best attack in the league
-     * @param defenseRank  1 = best defence in the league
+     * The "More details" panel: this season's numbers only, for people to read.
+     * (The win/draw/loss probabilities above use the full model, which also
+     * looks at last season and adjusts for opponents.)
+     *
+     * @param season         null before the team's first match this season
+     * @param xgForRank      1 = most xG created per match this season
+     * @param xgAgainstRank  1 = least xG conceded per match this season
      */
-    public record TeamPanel(String name, double attack, double defense, Integer attackRank, Integer defenseRank,
+    public record TeamPanel(String name, UnderstatXgProvider.SeasonStats season, Integer xgForRank, Integer xgAgainstRank,
                             int leagueSize, List<UnderstatXgProvider.RecentMatch> form, List<Threat> threats) {
     }
 

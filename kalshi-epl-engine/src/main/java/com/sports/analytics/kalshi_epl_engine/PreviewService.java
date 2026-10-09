@@ -46,7 +46,7 @@ public class PreviewService {
             byMatch.computeIfAbsent(matchKey(e.getTicker()), k -> new ArrayList<>()).add(e);
         }
 
-        Map<String, TeamXgRating> league = understatXgProvider.getCurrentLeagueRatings();
+        Map<String, UnderstatXgProvider.SeasonStats> league = understatXgProvider.getCurrentLeagueSeasonStats();
         List<MatchPreview> previews = new ArrayList<>();
         for (List<MarketEvaluation> markets : byMatch.values()) {
             String[] teams = teamsOf(markets.get(0).getTitle());
@@ -57,12 +57,11 @@ public class PreviewService {
         return previews;
     }
 
-    private Optional<MatchPreview> buildOne(String home, String away, List<MarketEvaluation> markets, Map<String, TeamXgRating> league) {
+    private Optional<MatchPreview> buildOne(String home, String away, List<MarketEvaluation> markets,
+                                            Map<String, UnderstatXgProvider.SeasonStats> league) {
         Optional<Double> homeXg = xgService.calculateHomeXG(home, away);
         Optional<Double> awayXg = xgService.calculateAwayXG(home, away);
-        Optional<TeamXgRating> homeRating = understatXgProvider.getRating(home);
-        Optional<TeamXgRating> awayRating = understatXgProvider.getRating(away);
-        if (homeXg.isEmpty() || awayXg.isEmpty() || homeRating.isEmpty() || awayRating.isEmpty()) return Optional.empty();
+        if (homeXg.isEmpty() || awayXg.isEmpty()) return Optional.empty();
 
         double[][] grid = poissonModel.scorelineProbabilities(homeXg.get(), awayXg.get(), MAX_GOALS);
         double homeWin = 0, draw = 0, awayWin = 0, over = 0;
@@ -88,7 +87,7 @@ public class PreviewService {
         return Optional.of(new MatchPreview(home, away, kickoff,
             round4(homeWin), round4(draw), round4(awayWin), kalshi[0], kalshi[1], kalshi[2],
             homeXg.get(), awayXg.get(), scores.subList(0, LIKELY_SCORES), round4(bothScore), round4(over),
-            panel(home, homeRating.get(), league), panel(away, awayRating.get(), league)));
+            panel(home, league), panel(away, league)));
     }
 
     /** Kalshi's home/draw/away probabilities (bid/ask midpoints), scaled to add up to 100%. */
@@ -110,15 +109,16 @@ public class PreviewService {
         return new Double[]{round4(home / total), round4(draw / total), round4(away / total)};
     }
 
-    private MatchPreview.TeamPanel panel(String team, TeamXgRating rating, Map<String, TeamXgRating> league) {
+    /** This season only: record, goals, xG per match with league ranks, form and top threats. */
+    private MatchPreview.TeamPanel panel(String team, Map<String, UnderstatXgProvider.SeasonStats> league) {
+        UnderstatXgProvider.SeasonStats season = understatXgProvider.getSeasonStats(team).orElse(null);
         String slug = teamNameResolver.getUnderstatSlug(team);
-        Integer attackRank = null, defenseRank = null;
-        if (slug != null && league.containsKey(slug)) {
-            attackRank = 1 + (int) league.values().stream().filter(r -> r.avgXgFor() > rating.avgXgFor()).count();
-            defenseRank = 1 + (int) league.values().stream().filter(r -> r.avgXgAgainst() < rating.avgXgAgainst()).count();
+        Integer xgForRank = null, xgAgainstRank = null;
+        if (season != null && slug != null && league.containsKey(slug)) {
+            xgForRank = 1 + (int) league.values().stream().filter(s -> s.xgForPerMatch() > season.xgForPerMatch()).count();
+            xgAgainstRank = 1 + (int) league.values().stream().filter(s -> s.xgAgainstPerMatch() < season.xgAgainstPerMatch()).count();
         }
-        return new MatchPreview.TeamPanel(team, round2(rating.avgXgFor()), round2(rating.avgXgAgainst()),
-            attackRank, defenseRank, league.size(),
+        return new MatchPreview.TeamPanel(team, season, xgForRank, xgAgainstRank, league.size(),
             understatXgProvider.getRecentForm(team, FORM_MATCHES), threats(team));
     }
 

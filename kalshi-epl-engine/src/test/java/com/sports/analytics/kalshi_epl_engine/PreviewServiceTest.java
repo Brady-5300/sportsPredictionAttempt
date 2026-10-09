@@ -37,12 +37,14 @@ class PreviewServiceTest {
     private void stubTeams() {
         when(xgService.calculateHomeXG("Arsenal", "Leeds United")).thenReturn(Optional.of(1.9));
         when(xgService.calculateAwayXG("Arsenal", "Leeds United")).thenReturn(Optional.of(0.9));
-        when(provider.getRating("Arsenal")).thenReturn(Optional.of(new TeamXgRating(1.7, 0.9, 30)));
-        when(provider.getRating("Leeds United")).thenReturn(Optional.of(new TeamXgRating(1.3, 1.5, 30)));
-        when(provider.getCurrentLeagueRatings()).thenReturn(Map.of(
-            "Arsenal", new TeamXgRating(1.7, 0.9, 30),
-            "Leeds", new TeamXgRating(1.3, 1.5, 30),
-            "Manchester_City", new TeamXgRating(1.9, 1.1, 30)));
+        UnderstatXgProvider.SeasonStats arsenal = new UnderstatXgProvider.SeasonStats(5, 4, 0, 1, 9, 3, 1.7, 0.9);
+        UnderstatXgProvider.SeasonStats leeds = new UnderstatXgProvider.SeasonStats(5, 2, 3, 0, 7, 5, 1.3, 1.5);
+        when(provider.getSeasonStats("Arsenal")).thenReturn(Optional.of(arsenal));
+        when(provider.getSeasonStats("Leeds United")).thenReturn(Optional.of(leeds));
+        when(provider.getCurrentLeagueSeasonStats()).thenReturn(Map.of(
+            "Arsenal", arsenal,
+            "Leeds", leeds,
+            "Manchester_City", new UnderstatXgProvider.SeasonStats(5, 3, 1, 1, 12, 6, 1.9, 1.1)));
         when(provider.getRecentForm(anyString(), anyInt())).thenReturn(List.of());
         when(provider.getPlayerContributions("Arsenal")).thenReturn(Map.of(
             "Striker", new PlayerXgContribution("Striker", false, 3.0, 450),       // 0.60 per 90
@@ -82,13 +84,14 @@ class PreviewServiceTest {
     }
 
     @Test
-    void ranksTeamsAndPicksRegularAttackersAsThreats() {
+    void showsThisSeasonsStatsRankedAgainstTheLeagueAndRegularAttackersAsThreats() {
         stubTeams();
         MatchPreview p = service.build(arsenalLeeds("2026-10-10T11:30:00Z")).get(0);
 
-        assertEquals(2, p.homeTeam().attackRank());   // behind Man City's 1.9
-        assertEquals(1, p.homeTeam().defenseRank());  // 0.9 conceded is the league's best
-        assertEquals(3, p.awayTeam().defenseRank());
+        assertEquals(4, p.homeTeam().season().wins());
+        assertEquals(2, p.homeTeam().xgForRank());      // behind Man City's 1.9 per match
+        assertEquals(1, p.homeTeam().xgAgainstRank());  // 0.9 conceded per match is the league's best
+        assertEquals(3, p.awayTeam().xgAgainstRank());
         assertEquals(List.of("Striker", "Winger"), p.homeTeam().threats().stream().map(MatchPreview.Threat::player).toList());
         assertEquals(0.6, p.homeTeam().threats().get(0).xgPer90(), 1e-9);
     }
@@ -111,7 +114,7 @@ class PreviewServiceTest {
     void skipsMatchesWithoutRatings() {
         when(xgService.calculateHomeXG(anyString(), anyString())).thenReturn(Optional.empty());
         when(xgService.calculateAwayXG(anyString(), anyString())).thenReturn(Optional.empty());
-        when(provider.getCurrentLeagueRatings()).thenReturn(Map.of());
+        when(provider.getCurrentLeagueSeasonStats()).thenReturn(Map.of());
 
         assertTrue(service.build(arsenalLeeds(null)).isEmpty());
     }

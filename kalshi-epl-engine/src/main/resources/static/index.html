@@ -762,14 +762,19 @@
   }
 
   function tapeColumn(t, maxAttack, maxDefense) {
-    const rank = (r) => r ? `${ordinal(r)} of ${t.leagueSize}` : 'unranked';
+    const rank = (r) => r ? `${ordinal(r)} of ${t.leagueSize}` : '';
+    const s = t.season;
+    const seasonStats = !s ? '<div class="explain">No matches yet this season.</div>' : `
+        <div class="stat-line"><span>Played <strong>${s.played}</strong></span><span><strong>${s.wins}</strong>W &middot; <strong>${s.draws}</strong>D &middot; <strong>${s.losses}</strong>L</span></div>
+        <div class="stat-line" style="margin-bottom:10px"><span>Goals</span><span><strong>${s.goalsFor}</strong> scored &middot; <strong>${s.goalsAgainst}</strong> conceded</span></div>
+        <div class="stat-line"><span>xG created: <strong>${s.xgForPerMatch.toFixed(2)}</strong> per match</span><span class="rank">${rank(t.xgForRank)}</span></div>
+        <div class="meter"><div style="width:${Math.min(100, s.xgForPerMatch / maxAttack * 100)}%"></div></div>
+        <div class="stat-line"><span>xG conceded: <strong>${s.xgAgainstPerMatch.toFixed(2)}</strong> per match</span><span class="rank">${rank(t.xgAgainstRank)}</span></div>
+        <div class="meter def"><div style="width:${Math.max(3, Math.min(100, (1 - (s.xgAgainstPerMatch - 0.6) / (maxDefense - 0.6 || 1)) * 100))}%"></div></div>`;
     return `
       <div class="tape-col">
-        <h4>${escapeHtml(t.name)}</h4>
-        <div class="stat-line"><span>Attack: <strong>${t.attack.toFixed(2)}</strong> xG/match</span><span class="rank">${rank(t.attackRank)}</span></div>
-        <div class="meter"><div style="width:${Math.min(100, t.attack / maxAttack * 100)}%"></div></div>
-        <div class="stat-line"><span>Defence: <strong>${t.defense.toFixed(2)}</strong> xG conceded</span><span class="rank">${rank(t.defenseRank)}</span></div>
-        <div class="meter def"><div style="width:${Math.min(100, (1 - (t.defense - 0.6) / (maxDefense - 0.6 || 1)) * 100)}%"></div></div>
+        <h4>${escapeHtml(t.name)} <span style="font-weight:500;color:var(--text-secondary);font-size:12px">this season</span></h4>
+        ${seasonStats}
         <div class="sub-h">Last ${t.form.length} (oldest &rarr; newest)</div>
         ${formChips(t.form)}
         <div class="sub-h">Top threats (xG per 90)</div>
@@ -780,8 +785,9 @@
 
   function renderPreview(p) {
     const hasKalshi = p.kalshiHomeWin != null;
-    const maxAttack = Math.max(p.homeTeam.attack, p.awayTeam.attack, 2.0);
-    const maxDefense = Math.max(p.homeTeam.defense, p.awayTeam.defense, 2.0);
+    const seasonValue = (t, key) => t.season ? t.season[key] : 0;
+    const maxAttack = Math.max(seasonValue(p.homeTeam, 'xgForPerMatch'), seasonValue(p.awayTeam, 'xgForPerMatch'), 2.0);
+    const maxDefense = Math.max(seasonValue(p.homeTeam, 'xgAgainstPerMatch'), seasonValue(p.awayTeam, 'xgAgainstPerMatch'), 2.0);
     const scores = p.likelyScores.map((s, i) => `<span class="chip ${i === 0 ? 'top' : ''}"><strong>${s.home}&ndash;${s.away}</strong> ${pctOf(s.probability)}</span>`).join('');
     return `
       <article class="preview">
@@ -814,7 +820,7 @@
   }
 
   function renderPreviews(previews) {
-    let html = '<p class="explain" style="margin:0 0 16px">The model\'s view of every upcoming match. Ratings are expected goals (xG) per match, adjusted for opponent strength. Tap "More details" on a match for form and top threats.</p>';
+    let html = '<p class="explain" style="margin:0 0 16px">The model\'s view of every upcoming match. Win chances and expected goals use the full model (each team\'s last 30 matches, adjusted for opponent strength). Tap "More details" for each team\'s numbers from this season only.</p>';
     let currentDay = null;
     for (const p of previews) {
       const day = fmtMatchDay(p.kickoff);
