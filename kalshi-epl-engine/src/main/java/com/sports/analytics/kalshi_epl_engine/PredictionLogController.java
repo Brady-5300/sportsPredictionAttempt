@@ -5,6 +5,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.ZoneId;
 import java.util.List;
 
 @RestController
@@ -13,9 +14,17 @@ import java.util.List;
 public class PredictionLogController {
 
     private final PredictionLogService predictionLogService;
+    private final TrackRecordService trackRecordService;
 
-    public PredictionLogController(PredictionLogService predictionLogService) {
+    public PredictionLogController(PredictionLogService predictionLogService, TrackRecordService trackRecordService) {
         this.predictionLogService = predictionLogService;
+        this.trackRecordService = trackRecordService;
+    }
+
+    /** Finished matches, the weekly model-vs-Kalshi scoreboard, calibration and pick results. */
+    @GetMapping("/track-record")
+    public TrackRecord trackRecord() {
+        return trackRecordService.build(ZoneId.systemDefault());
     }
 
     /** All predictions logged live so far, both resolved and still pending. */

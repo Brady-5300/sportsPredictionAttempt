@@ -278,9 +278,79 @@
   }
   .planner-summary strong { color: var(--text); }
 
+  .tabs {
+    display: flex;
+    gap: 4px;
+    padding: 0 24px;
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+  }
+  .tab {
+    border: none;
+    background: none;
+    padding: 12px 14px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    white-space: nowrap;
+  }
+  .tab:hover { color: var(--text); }
+  .tab[aria-selected="true"] { color: var(--text); border-bottom-color: var(--green); }
+  .tab-panel[hidden] { display: none; }
+
+  .tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+  .tile { border: 1px solid var(--border-strong); border-radius: 12px; padding: 14px 16px; }
+  .tile .label { font-size: 11px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.03em; }
+  .tile .value { font-size: 22px; font-weight: 800; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .tile .sub { font-size: 12.5px; color: var(--text-secondary); margin-top: 4px; line-height: 1.4; }
+  .pos { color: var(--green); }
+  .neg { color: var(--red); }
+
+  .explain { font-size: 13px; color: var(--text-secondary); line-height: 1.5; margin: 6px 0 0; }
+
+  .calib-row { display: grid; grid-template-columns: 90px 1fr 120px; gap: 12px; align-items: center; padding: 8px 16px; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .calib-row:last-child { border-bottom: none; }
+  .bars { display: flex; flex-direction: column; gap: 3px; }
+  .bar { height: 7px; border-radius: 4px; background: var(--text-faint); }
+  .bar.actual { background: var(--green); }
+  .calib-row .nums { text-align: right; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+
+  .match-card { padding: 12px 16px; border-bottom: 1px solid var(--border); }
+  .match-card:last-child { border-bottom: none; }
+  .match-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .match-head .name { font-weight: 700; font-size: 14.5px; }
+  .match-head .when { font-size: 12.5px; color: var(--text-secondary); }
+  .outcomes { display: grid; grid-template-columns: 1fr 70px 70px; gap: 2px 12px; margin-top: 8px; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .outcomes .h { font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.03em; text-align: right; }
+  .outcomes .h:first-child { text-align: left; }
+  .outcomes .num { text-align: right; }
+  .outcomes .hit { font-weight: 700; }
+  .tag { display: inline-block; font-size: 10.5px; font-weight: 700; padding: 1px 6px; border-radius: 999px; margin-left: 6px; vertical-align: 1px; }
+  .tag-pick { background: var(--green-bg-strong); color: var(--green); }
+  .winner-badge { font-size: 12px; font-weight: 700; padding: 3px 9px; border-radius: 999px; background: rgba(0,0,0,0.05); color: var(--text-secondary); }
+  .winner-badge.model { background: var(--green-bg-strong); color: var(--green); }
+  .winner-badge.kalshi { background: rgba(0,0,0,0.08); color: var(--text); }
+
+  .scoreline { text-align: center; padding: 22px 16px; border: 1px solid var(--border-strong); border-radius: 12px; margin-bottom: 8px; }
+  .scoreline .teams { display: flex; justify-content: center; align-items: center; gap: 20px; font-size: 15px; font-weight: 700; }
+  .scoreline .score { font-size: 40px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .scoreline .verdict { margin-top: 10px; font-size: 13.5px; color: var(--text-secondary); line-height: 1.5; }
+  .week-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--border); font-size: 13.5px; flex-wrap: wrap; }
+  .week-row:last-child { border-bottom: none; }
+  .week-row .nums { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+
   @media (max-width: 640px) {
     .market-row { flex-wrap: wrap; }
     .market-right { width: 100%; justify-content: space-between; }
+    .tabs { padding: 0 8px; }
+    .calib-row { grid-template-columns: 70px 1fr 90px; }
   }
 </style>
 </head>
@@ -299,7 +369,14 @@
   </div>
 </header>
 
+<nav class="tabs" role="tablist" aria-label="Sections">
+  <button class="tab" role="tab" data-tab="markets" aria-selected="true">Markets</button>
+  <button class="tab" role="tab" data-tab="track" aria-selected="false">Track record</button>
+  <button class="tab" role="tab" data-tab="scoreboard" aria-selected="false">Model vs Kalshi</button>
+</nav>
+
 <main>
+<div class="tab-panel" id="tab-markets" role="tabpanel">
   <div class="banner banner-offline" id="offlineBanner">
     <span class="icon">&#9888;</span>
     <div>
@@ -333,6 +410,15 @@
   </section>
 
   <div id="content"></div>
+</div>
+
+<div class="tab-panel" id="tab-track" role="tabpanel" hidden>
+  <div id="trackContent"><div class="empty-state">Loading&hellip;</div></div>
+</div>
+
+<div class="tab-panel" id="tab-scoreboard" role="tabpanel" hidden>
+  <div id="scoreboardContent"><div class="empty-state">Loading&hellip;</div></div>
+</div>
 </main>
 
 <script>
@@ -546,9 +632,150 @@
     content.innerHTML = html;
   }
 
+  // ---------------------------------------------------------------- tabs
+
+  const TABS = ['markets', 'track', 'scoreboard'];
+
+  function showTab(name) {
+    if (!TABS.includes(name)) name = 'markets';
+    for (const t of TABS) {
+      document.getElementById('tab-' + t).hidden = t !== name;
+      document.querySelector(`.tab[data-tab="${t}"]`).setAttribute('aria-selected', String(t === name));
+    }
+    if (name !== 'markets') loadTrackRecord();
+  }
+
+  document.querySelector('.tabs').addEventListener('click', (e) => {
+    const tab = e.target.closest('.tab');
+    if (tab) location.hash = tab.dataset.tab === 'markets' ? '' : tab.dataset.tab;
+  });
+  window.addEventListener('hashchange', () => showTab(location.hash.slice(1)));
+
+  // ---------------------------------------------------------------- track record + scoreboard
+
+  const pctOf = (p) => (p * 100).toFixed(0) + '%';
+  const brier = (b) => b.toFixed(3);
+  const winnerText = { model: 'Model closer', kalshi: 'Kalshi closer', tie: 'Dead even' };
+
+  const EMPTY_LOG = `
+    <div class="empty-state">
+      <div class="big">No finished matches yet</div>
+      <div>The app logs every prediction before kickoff, then fills in results once Kalshi settles the market
+      (it checks every 30 minutes while running). Come back after the next match weekend.</div>
+    </div>`;
+
+  async function loadTrackRecord() {
+    try {
+      const res = await fetch('/api/prediction-log/track-record');
+      const record = await res.json();
+      document.getElementById('trackContent').innerHTML = record.finishedMatches ? renderTrackRecord(record) : EMPTY_LOG;
+      document.getElementById('scoreboardContent').innerHTML = record.finishedMatches ? renderScoreboard(record) : EMPTY_LOG;
+    } catch (e) {
+      const msg = `<div class="empty-state">Couldn't load the track record: ${escapeHtml(e.message)}</div>`;
+      document.getElementById('trackContent').innerHTML = msg;
+      document.getElementById('scoreboardContent').innerHTML = msg;
+    }
+  }
+
+  function renderTrackRecord(r) {
+    const p = r.picks;
+    const profitClass = p.profit > 0 ? 'pos' : p.profit < 0 ? 'neg' : '';
+    const o = r.overall;
+    const tiles = `
+      <div class="tiles">
+        <div class="tile">
+          <div class="label">Finished matches</div>
+          <div class="value">${r.finishedMatches}</div>
+          <div class="sub">${o.comparedPredictions} outcomes with a Kalshi price to compare</div>
+        </div>
+        <div class="tile">
+          <div class="label">Accuracy (Brier, lower = better)</div>
+          <div class="value">${o.comparedPredictions ? brier(o.modelBrier) : '&ndash;'}</div>
+          <div class="sub">${o.comparedPredictions ? `Kalshi: ${brier(o.marketBrier)}` : 'No Kalshi prices to compare yet'}</div>
+        </div>
+        <div class="tile">
+          <div class="label">YES picks, $1 each</div>
+          <div class="value ${profitClass}">${p.picks ? (p.profit >= 0 ? '+' : '&minus;') + money(Math.abs(p.profit)) : '&ndash;'}</div>
+          <div class="sub">${p.picks ? `${p.wins} of ${p.picks} hit &middot; ${money(p.staked)} in, ${money(p.returned)} back` : 'No picks among finished matches yet'}</div>
+        </div>
+      </div>
+      <p class="explain">Brier score is the average squared gap between a forecast and what happened (1 if it happened, 0 if not).
+      Saying 50% every time scores 0.250; lower is better.</p>`;
+
+    const calib = r.calibration.map(b => `
+      <div class="calib-row">
+        <div>${escapeHtml(b.rangeLabel)}</div>
+        <div class="bars" title="grey = what the model said, green = how often it happened">
+          <div class="bar" style="width:${Math.max(2, b.avgPredictedProbability * 100)}%"></div>
+          <div class="bar actual" style="width:${Math.max(2, b.actualFrequency * 100)}%"></div>
+        </div>
+        <div class="nums">${pctOf(b.avgPredictedProbability)} said, ${pctOf(b.actualFrequency)} hit <span style="color:var(--text-faint)">(${b.count})</span></div>
+      </div>`).join('');
+
+    const matches = r.matches.map(m => `
+      <div class="match-card">
+        <div class="match-head">
+          <div>
+            <div class="name">${escapeHtml(m.name)}</div>
+            <div class="when">${escapeHtml(fmtMatchDay(m.kickoff))}${m.result ? ' &middot; Result: ' + escapeHtml(m.result) : ''}</div>
+          </div>
+          ${m.winner ? `<span class="winner-badge ${m.winner}">${winnerText[m.winner]}</span>` : ''}
+        </div>
+        <div class="outcomes">
+          <div class="h">Outcome</div><div class="h">Model</div><div class="h">Kalshi</div>
+          ${m.markets.map(o => `
+            <div class="${o.happened ? 'hit' : ''}">${o.happened ? '&#10003; ' : ''}${escapeHtml(o.label)}${o.pick ? '<span class="tag tag-pick">PICK</span>' : ''}</div>
+            <div class="num ${o.happened ? 'hit' : ''}">${pctOf(o.modelProbability)}</div>
+            <div class="num ${o.happened ? 'hit' : ''}">${o.kalshiProbability == null ? '&ndash;' : pctOf(o.kalshiProbability)}</div>`).join('')}
+        </div>
+      </div>`).join('');
+
+    return `
+      ${tiles}
+      <div class="section-title">When the model says X%, how often does it happen?</div>
+      <div class="card-list">${calib}</div>
+      <p class="explain">If the model is honest, the green bar matches the grey one in each row. With only a few matches the bars bounce around a lot.</p>
+      <div class="section-title">Finished matches</div>
+      <div class="card-list">${matches}</div>`;
+  }
+
+  function renderScoreboard(r) {
+    const o = r.overall;
+    let verdict;
+    if (!o.comparedPredictions) {
+      verdict = 'No Kalshi prices to compare yet.';
+    } else {
+      const gap = o.modelBrier - o.marketBrier;
+      const noise = 2 * o.brierDifferenceStandardError;
+      const leader = gap < 0 ? 'The model' : 'Kalshi';
+      verdict = `Overall Brier: model ${brier(o.modelBrier)}, Kalshi ${brier(o.marketBrier)}. `
+        + (Math.abs(gap) < noise || o.brierDifferenceStandardError === 0
+          ? `${Math.abs(gap) < 0.0005 ? 'Dead even' : leader + ' is slightly ahead'}, but that's within the noise. It takes around 100 matches before a gap means much.`
+          : `${leader} is ahead by more than the noise, a real gap so far.`);
+    }
+    const weeks = r.weeks.map(w => `
+      <div class="week-row">
+        <div><strong>Weekend of ${escapeHtml(fmtMatchDay(w.weekendEnding + 'T12:00:00'))}</strong>
+          <span style="color:var(--text-secondary)"> &middot; ${w.matches} match${w.matches === 1 ? '' : 'es'}</span></div>
+        <div class="nums">Model ${brier(w.modelBrier)} &middot; Kalshi ${brier(w.kalshiBrier)}</div>
+        <span class="winner-badge ${w.winner}">${w.winner === 'model' ? 'Model wins' : w.winner === 'kalshi' ? 'Kalshi wins' : 'Tie'}</span>
+      </div>`).join('');
+    return `
+      <div class="scoreline">
+        <div class="teams"><span>Model</span><span class="score">${r.modelWeeks} &ndash; ${r.kalshiWeeks}</span><span>Kalshi</span></div>
+        ${r.tiedWeeks ? `<div class="explain">${r.tiedWeeks} tied weekend${r.tiedWeeks === 1 ? '' : 's'}</div>` : ''}
+        <div class="verdict">${verdict}</div>
+      </div>
+      <p class="explain">Each weekend, whoever's forecasts were closer to what happened (lower Brier score) wins the week.
+      "Model" is the version the app's picks use; "Kalshi" is the market's price just before kickoff.</p>
+      <div class="section-title">Weekend by weekend</div>
+      <div class="card-list">${weeks}</div>`;
+  }
+
   document.getElementById('refreshBtn').addEventListener('click', loadData);
   document.getElementById('plannerForm').addEventListener('submit', runPlanner);
 
+  showTab(location.hash.slice(1));
   loadData();
   refreshTimer = setInterval(loadData, REFRESH_INTERVAL_MS);
 </script>
