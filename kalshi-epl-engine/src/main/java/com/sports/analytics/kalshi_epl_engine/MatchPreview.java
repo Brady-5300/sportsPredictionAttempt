@@ -19,15 +19,11 @@ public record MatchPreview(
     Double kalshiAwayWin,
     double homeExpectedGoals,
     double awayExpectedGoals,
-    List<Scoreline> likelyScores,
     double bothTeamsScore,
     double overTwoAndHalfGoals,
     TeamPanel homeTeam,
     TeamPanel awayTeam
 ) {
-    public record Scoreline(int home, int away, double probability) {
-    }
-
     /**
      * The "More details" panel: this season's numbers only, for people to read.
      * (The win/draw/loss probabilities above use the full model, which also

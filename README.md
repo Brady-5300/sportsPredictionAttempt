@@ -23,7 +23,7 @@ Once it's running, open **http://localhost:8080** in a browser. The first scan t
 The dashboard has four tabs:
 
 - **Markets:** every open Kalshi EPL market, grouped by day in kickoff order, with the model's probability, the price to buy at, the edge after Kalshi's fee, and a verdict (**YES (Undervalued)**, **FAIR VALUE** or **AVOID**). At the top, the **weekend wager planner** takes a dollar amount and splits it across the weekend's undervalued picks, weighted by edge, showing how many whole contracts each share buys and what it pays.
-- **Match previews:** a card for every upcoming match: the model's win/draw/loss bar next to Kalshi's, expected goals, the most likely scorelines, both-teams-to-score and over-2.5-goals chances, and a "More details" section with each team's numbers from this season: record, goals, xG created and conceded with league ranks, recent form and most dangerous attackers.
+- **Match previews:** a card for every upcoming match: the model's win/draw/loss bar next to Kalshi's, expected goals, both-teams-to-score and over-2.5-goals chances, and a "More details" section with each team's numbers from this season: record, goals, xG created and conceded with league ranks, recent form and most dangerous attackers.
 - **Track record:** every finished match the app has logged: what the model said, what Kalshi said, what happened, how well the model's probabilities match reality, and how its picks would have done.
 - **Model vs Kalshi:** a weekend-by-weekend scoreboard of whose forecasts were closer to the results.
 

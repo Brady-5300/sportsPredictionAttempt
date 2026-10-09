@@ -55,7 +55,7 @@ class PreviewServiceTest {
     }
 
     @Test
-    void buildsWinDrawLossLikelyScoresAndGoalMarkets() {
+    void buildsWinDrawLossAndGoalMarkets() {
         stubTeams();
         MatchPreview p = service.build(arsenalLeeds("2026-10-10T11:30:00Z")).get(0);
 
@@ -63,8 +63,6 @@ class PreviewServiceTest {
         assertEquals("Leeds United", p.away());
         assertEquals(1.0, p.homeWin() + p.draw() + p.awayWin(), 1e-3);
         assertEquals(poisson.calculateMarketProbability(1.9, 0.9, "HOME"), p.homeWin(), 1e-3);
-        assertEquals(5, p.likelyScores().size());
-        assertTrue(p.likelyScores().get(0).probability() >= p.likelyScores().get(4).probability());
         // Both score = (1 - P(home 0)) * (1 - P(away 0)) for independent Poisson goals.
         assertEquals((1 - Math.exp(-1.9)) * (1 - Math.exp(-0.9)), p.bothTeamsScore(), 1e-3);
         double underThree = 0;

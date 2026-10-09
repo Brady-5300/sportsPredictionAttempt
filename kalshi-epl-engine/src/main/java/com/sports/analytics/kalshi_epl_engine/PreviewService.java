@@ -18,7 +18,6 @@ import java.util.Optional;
 public class PreviewService {
 
     private static final int MAX_GOALS = 10;
-    private static final int LIKELY_SCORES = 5;
     private static final int FORM_MATCHES = 5;
     private static final int THREATS = 3;
     // Only count players with at least this share of the most-used player's minutes, so a
@@ -65,16 +64,13 @@ public class PreviewService {
 
         double[][] grid = poissonModel.scorelineProbabilities(homeXg.get(), awayXg.get(), MAX_GOALS);
         double homeWin = 0, draw = 0, awayWin = 0, over = 0;
-        List<MatchPreview.Scoreline> scores = new ArrayList<>();
         for (int h = 0; h <= MAX_GOALS; h++) {
             for (int a = 0; a <= MAX_GOALS; a++) {
                 double p = grid[h][a];
                 if (h > a) homeWin += p; else if (h < a) awayWin += p; else draw += p;
                 if (h + a > 2) over += p;
-                scores.add(new MatchPreview.Scoreline(h, a, round4(p)));
             }
         }
-        scores.sort(Comparator.comparingDouble(MatchPreview.Scoreline::probability).reversed());
         double noHomeGoal = 0, noAwayGoal = 0;
         for (int i = 0; i <= MAX_GOALS; i++) {
             noHomeGoal += grid[0][i];
@@ -86,7 +82,7 @@ public class PreviewService {
         String kickoff = markets.get(0).getKickoff();
         return Optional.of(new MatchPreview(home, away, kickoff,
             round4(homeWin), round4(draw), round4(awayWin), kalshi[0], kalshi[1], kalshi[2],
-            homeXg.get(), awayXg.get(), scores.subList(0, LIKELY_SCORES), round4(bothScore), round4(over),
+            homeXg.get(), awayXg.get(), round4(bothScore), round4(over),
             panel(home, league), panel(away, league)));
     }
 

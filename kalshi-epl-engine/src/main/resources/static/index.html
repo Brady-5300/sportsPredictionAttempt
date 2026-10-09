@@ -353,7 +353,12 @@
   .pv-when { font-size: 12px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; }
   .pv-teams { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 10px; margin: 10px 0 14px; }
   .pv-team { display: flex; flex-direction: column; align-items: center; gap: 6px; font-weight: 800; font-size: 16px; min-width: 0; text-align: center; line-height: 1.2; }
-  .pv-team .name { overflow-wrap: anywhere; }
+  .pv-team .name { overflow-wrap: break-word; hyphens: auto; }
+  @media (max-width: 360px) {
+    .pv-teams { gap: 6px; }
+    .pv-team { font-size: 12.5px !important; }
+    .pv-xg .num { font-size: 17px !important; }
+  }
   .crest {
     width: 34px; height: 34px; border-radius: 50%; flex-shrink: 0;
     display: inline-flex; align-items: center; justify-content: center;
@@ -794,7 +799,6 @@
     const seasonValue = (t, key) => t.season ? t.season[key] : 0;
     const maxAttack = Math.max(seasonValue(p.homeTeam, 'xgForPerMatch'), seasonValue(p.awayTeam, 'xgForPerMatch'), 2.0);
     const maxDefense = Math.max(seasonValue(p.homeTeam, 'xgAgainstPerMatch'), seasonValue(p.awayTeam, 'xgAgainstPerMatch'), 2.0);
-    const scores = p.likelyScores.map((s, i) => `<span class="chip ${i === 0 ? 'top' : ''}"><strong>${s.home}&ndash;${s.away}</strong> ${pctOf(s.probability)}</span>`).join('');
     return `
       <article class="preview">
         <div class="pv-when">${p.kickoff ? escapeHtml(fmtKickoffTime(p.kickoff)) : 'Kickoff TBD'}</div>
@@ -808,9 +812,6 @@
         ${hasKalshi ? `
           <div class="prob-label-row"><span>Kalshi</span><span>${pctOf(p.kalshiHomeWin)} &middot; ${pctOf(p.kalshiDraw)} &middot; ${pctOf(p.kalshiAwayWin)}</span></div>
           ${probBar(p.kalshiHomeWin, p.kalshiDraw, p.kalshiAwayWin, true)}` : ''}
-        <div class="pv-facts">
-          <span class="lbl">Likely scores</span>${scores}
-        </div>
         <div class="pv-facts">
           <span class="chip">Both teams score <strong>${pctOf(p.bothTeamsScore)}</strong></span>
           <span class="chip">Over 2.5 goals <strong>${pctOf(p.overTwoAndHalfGoals)}</strong></span>
