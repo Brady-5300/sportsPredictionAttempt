@@ -46,12 +46,12 @@ class PreviewServiceTest {
             "Leeds", leeds,
             "Manchester_City", new UnderstatXgProvider.SeasonStats(5, 3, 1, 1, 12, 6, 1.9, 1.1)));
         when(provider.getRecentForm(anyString(), anyInt())).thenReturn(List.of());
-        when(provider.getPlayerContributions("Arsenal")).thenReturn(Map.of(
-            "Striker", new PlayerXgContribution("Striker", false, 3.0, 450),       // 0.60 per 90
-            "Winger", new PlayerXgContribution("Winger", false, 2.0, 450),         // 0.40 per 90
-            "Super Sub", new PlayerXgContribution("Super Sub", false, 1.0, 60),    // 1.50 per 90, too few minutes
-            "Centre Back", new PlayerXgContribution("Centre Back", true, 1.2, 450)));
-        when(provider.getPlayerContributions("Leeds United")).thenReturn(Map.of());
+        when(provider.getSeasonPlayers("Arsenal")).thenReturn(List.of(
+            new UnderstatPlayerSeason("Striker", "Arsenal", "F", 5, 450, 3, 3, 2.5, 0.7),     // 6 G+A
+            new UnderstatPlayerSeason("Winger", "Arsenal", "M", 5, 450, 2, 1, 1.0, 0.8),      // 3 G+A
+            new UnderstatPlayerSeason("Centre Back", "Arsenal", "D", 5, 450, 1, 2, 0.4, 0.1), // 3 G+A, less xG
+            new UnderstatPlayerSeason("Super Sub", "Arsenal", "F", 2, 60, 2, 0, 0.9, 0.0)));  // too few minutes
+        when(provider.getSeasonPlayers("Leeds United")).thenReturn(List.of());
     }
 
     @Test
@@ -92,8 +92,12 @@ class PreviewServiceTest {
         assertEquals(2, p.homeTeam().xgForRank());      // behind Man City's 1.9 per match
         assertEquals(1, p.homeTeam().xgAgainstRank());  // 0.9 conceded per match is the league's best
         assertEquals(3, p.awayTeam().xgAgainstRank());
-        assertEquals(List.of("Striker", "Winger"), p.homeTeam().threats().stream().map(MatchPreview.Threat::player).toList());
-        assertEquals(0.6, p.homeTeam().threats().get(0).xgPer90(), 1e-9);
+        // Ranked by goals + assists; Winger and Centre Back tie on 3, Winger has more xG + xA per 90.
+        assertEquals(List.of("Striker", "Winger", "Centre Back"), p.homeTeam().threats().stream().map(MatchPreview.Threat::player).toList());
+        MatchPreview.Threat top = p.homeTeam().threats().get(0);
+        assertEquals(3, top.goals());
+        assertEquals(3, top.assists());
+        assertEquals(0.5, top.xgPer90(), 1e-9); // 2.5 xG over 450 minutes
     }
 
     @Test

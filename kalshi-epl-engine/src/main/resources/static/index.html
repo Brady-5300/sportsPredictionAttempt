@@ -777,9 +777,15 @@
         ${seasonStats}
         <div class="sub-h">Last ${t.form.length} (oldest &rarr; newest)</div>
         ${formChips(t.form)}
-        <div class="sub-h">Top threats (xG per 90)</div>
-        ${t.threats.length ? t.threats.map(p => `<div class="threat"><span>${escapeHtml(p.player)}</span><span class="x">${p.xgPer90.toFixed(2)}</span></div>`).join('')
-          : '<div class="explain">Not enough minutes played yet.</div>'}
+        <div class="sub-h">Top contributors (goals + assists)</div>
+        ${t.threats.length ? t.threats.map(p => `
+          <div class="threat">
+            <span>${escapeHtml(p.player)}</span>
+            <span class="x" title="Understat's xG / xA per 90 minutes">
+              <strong style="color:var(--text)">${p.goals}G ${p.assists}A</strong> &middot; ${p.xgPer90.toFixed(2)} xG/90
+            </span>
+          </div>`).join('')
+          : '<div class="explain">No regular contributors yet this season.</div>'}
       </div>`;
   }
 

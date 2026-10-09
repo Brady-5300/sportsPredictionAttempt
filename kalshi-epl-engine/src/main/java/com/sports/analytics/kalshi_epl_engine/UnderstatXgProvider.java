@@ -157,6 +157,25 @@ public class UnderstatXgProvider {
         return season.subList(0, Math.min(count, season.size()));
     }
 
+    /**
+     * Understat's season totals for this team's players (goals, assists, xG, xA) - display only.
+     * A player who moved mid-season is listed under both clubs, so he only counts for the
+     * team whose recent lineups he's in.
+     */
+    public List<UnderstatPlayerSeason> getSeasonPlayers(String teamName) {
+        String slug = teamNameResolver.getUnderstatSlug(teamName);
+        if (slug == null) return List.of();
+        Map<String, PlayerXgContribution> recentRoster = getPlayerContributions(teamName);
+        return scraper.fetchLeaguePlayers(currentSeasonStartYear()).stream()
+            .filter(p -> {
+                String[] teams = p.team().split(",");
+                boolean listed = java.util.Arrays.stream(teams)
+                    .anyMatch(t -> slug.equals(teamNameResolver.getUnderstatSlug(t.trim())));
+                return listed && (teams.length == 1 || recentRoster.containsKey(p.player()));
+            })
+            .toList();
+    }
+
     /** This team's numbers for this season only, or empty before its first match. */
     public Optional<SeasonStats> getSeasonStats(String teamName) {
         String slug = teamNameResolver.getUnderstatSlug(teamName);

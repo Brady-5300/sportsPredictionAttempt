@@ -41,7 +41,7 @@ public record MatchPreview(
                             int leagueSize, List<UnderstatXgProvider.RecentMatch> form, List<Threat> threats) {
     }
 
-    /** One of a team's most dangerous attackers this season, by expected goals per 90 minutes. */
-    public record Threat(String player, double xgPer90, double totalXg, int minutes) {
+    /** One of a team's top contributors this season: real goals and assists, plus Understat's xG/xA per 90. */
+    public record Threat(String player, int goals, int assists, int minutes, double xgPer90, double xaPer90) {
     }
 }

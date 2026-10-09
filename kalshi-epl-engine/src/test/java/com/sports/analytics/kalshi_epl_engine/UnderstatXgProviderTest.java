@@ -121,6 +121,21 @@ class UnderstatXgProviderTest {
     }
 
     @Test
+    void aPlayerWhoMovedMidSeasonOnlyCountsForTheTeamHesPlayingFor() {
+        when(scraper.fetchTeamMatches("Arsenal", CURRENT_SEASON)).thenReturn(List.of(completedMatch("1", "h")));
+        stubMatch("1", List.of(), List.of(), List.of(rosterEntry("Stays Here", 90, "FWR"), rosterEntry("Joined Arsenal", 90, "FWR")), List.of());
+        when(scraper.fetchLeaguePlayers(CURRENT_SEASON)).thenReturn(List.of(
+            new UnderstatPlayerSeason("Stays Here", "Arsenal", "F", 5, 450, 2, 1, 1.5, 0.5),
+            new UnderstatPlayerSeason("Joined Arsenal", "Chelsea,Arsenal", "F", 5, 450, 3, 0, 2.0, 0.2),
+            new UnderstatPlayerSeason("Left Arsenal", "Arsenal,Fulham", "F", 5, 450, 4, 0, 2.5, 0.1),
+            new UnderstatPlayerSeason("Chelsea Player", "Chelsea", "F", 5, 450, 5, 0, 3.0, 0.1)));
+
+        List<String> names = provider.getSeasonPlayers("Arsenal").stream().map(UnderstatPlayerSeason::player).toList();
+
+        assertEquals(List.of("Stays Here", "Joined Arsenal"), names);
+    }
+
+    @Test
     void noSeasonStatsBeforeATeamsFirstMatchThisSeason() {
         when(scraper.fetchTeamMatches("Arsenal", PREVIOUS_SEASON)).thenReturn(List.of(completedMatchOn("p1", "h", "2024-03-01")));
         stubMatch("p1", List.of(), List.of(), List.of(), List.of());

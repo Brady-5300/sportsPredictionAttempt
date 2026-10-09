@@ -122,15 +122,21 @@ public class PreviewService {
             understatXgProvider.getRecentForm(team, FORM_MATCHES), threats(team));
     }
 
+    /**
+     * Top contributors this season by goals + assists (ties broken by xG + xA per 90),
+     * from Understat's season table - display only, the model doesn't use these.
+     */
     private List<MatchPreview.Threat> threats(String team) {
-        Map<String, PlayerXgContribution> players = understatXgProvider.getPlayerContributions(team);
-        int maxMinutes = players.values().stream().mapToInt(PlayerXgContribution::totalMinutes).max().orElse(0);
-        return players.values().stream()
-            .filter(p -> !p.defensivePosition())
-            .filter(p -> p.totalMinutes() >= THREAT_MIN_MINUTES_SHARE * maxMinutes && p.totalMinutes() > 0)
-            .sorted(Comparator.comparingDouble(PlayerXgContribution::per90Xg).reversed())
+        List<UnderstatPlayerSeason> players = understatXgProvider.getSeasonPlayers(team);
+        int maxMinutes = players.stream().mapToInt(UnderstatPlayerSeason::minutes).max().orElse(0);
+        return players.stream()
+            .filter(p -> p.minutes() > 0 && p.minutes() >= THREAT_MIN_MINUTES_SHARE * maxMinutes)
+            .sorted(Comparator.comparingInt((UnderstatPlayerSeason p) -> p.goals() + p.assists())
+                .thenComparingDouble(p -> (p.xg() + p.xa()) / p.minutes())
+                .reversed())
             .limit(THREATS)
-            .map(p -> new MatchPreview.Threat(p.playerName(), round2(p.per90Xg()), round2(p.totalXg()), p.totalMinutes()))
+            .map(p -> new MatchPreview.Threat(p.player(), p.goals(), p.assists(), p.minutes(),
+                round2(p.xg() / p.minutes() * 90), round2(p.xa() / p.minutes() * 90)))
             .toList();
     }
 

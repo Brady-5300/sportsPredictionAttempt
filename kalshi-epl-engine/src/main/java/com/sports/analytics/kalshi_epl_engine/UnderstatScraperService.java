@@ -58,8 +58,52 @@ public class UnderstatScraperService {
     private final ConcurrentHashMap<String, CachedTeamMatches> teamMatchesCache = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Integer, List<String>> leagueTeamsCache = new ConcurrentHashMap<>();
 
+    // Season player totals change after every match, but nobody needs them to the minute.
+    private static final long LEAGUE_PLAYERS_TTL_SECONDS = 60 * 60;
+    private record CachedPlayers(List<UnderstatPlayerSeason> players, Instant fetchedAt) {
+    }
+    private final ConcurrentHashMap<Integer, CachedPlayers> leaguePlayersCache = new ConcurrentHashMap<>();
+
     public UnderstatScraperService(ScraperHealthMonitor healthMonitor) {
         this.healthMonitor = healthMonitor;
+    }
+
+    /**
+     * Understat's own season totals for every EPL player (goals, assists, and
+     * Understat's xG/xA) - display only; the model uses its own shot-based xG.
+     */
+    public List<UnderstatPlayerSeason> fetchLeaguePlayers(int season) {
+        CachedPlayers cached = leaguePlayersCache.get(season);
+        if (cached != null && Duration.between(cached.fetchedAt(), Instant.now()).getSeconds() < LEAGUE_PLAYERS_TTL_SECONDS) {
+            return cached.players();
+        }
+
+        String url = BASE_URL + "/getLeagueData/EPL/" + season;
+        try {
+            List<UnderstatPlayerSeason> players = parseLeaguePlayers(getAsAjax(url));
+            healthMonitor.recordSuccess(SOURCE);
+            if (!players.isEmpty()) leaguePlayersCache.put(season, new CachedPlayers(players, Instant.now()));
+            return players;
+        } catch (Exception e) {
+            System.err.println("[UNDERSTAT] Failed to fetch league players for " + season + ": " + e.getMessage());
+            healthMonitor.recordFailure(SOURCE, e.getMessage());
+            return cached != null ? cached.players() : List.of();
+        }
+    }
+
+    List<UnderstatPlayerSeason> parseLeaguePlayers(String json) {
+        if (json == null) return List.of();
+        List<UnderstatPlayerSeason> players = new ArrayList<>();
+        for (JsonNode p : objectMapper.readTree(json).path("players")) {
+            String name = p.path("player_name").asString(null);
+            String team = p.path("team_title").asString(null);
+            if (name == null || team == null) continue;
+            players.add(new UnderstatPlayerSeason(name, team, p.path("position").asString(""),
+                p.path("games").asInt(0), p.path("time").asInt(0),
+                p.path("goals").asInt(0), p.path("assists").asInt(0),
+                p.path("xG").asDouble(0.0), p.path("xA").asDouble(0.0)));
+        }
+        return List.copyOf(players);
     }
 
     /**

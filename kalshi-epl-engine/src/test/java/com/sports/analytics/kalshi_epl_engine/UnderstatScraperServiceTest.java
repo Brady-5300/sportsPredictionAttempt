@@ -146,4 +146,20 @@ class UnderstatScraperServiceTest {
         assertTrue(empty.shots().get("h").isEmpty());
         assertTrue(empty.rosters().get("h").isEmpty());
     }
+
+    @Test
+    void parsesSeasonPlayerTotalsWhereNumbersArriveAsText() {
+        String json = "{\"players\":[{\"player_name\":\"João Pedro\",\"team_title\":\"Chelsea\",\"position\":\"F\","
+            + "\"games\":\"4\",\"time\":\"360\",\"goals\":\"3\",\"assists\":\"3\",\"xG\":\"2.517\",\"xA\":\"0.744\"}]}";
+
+        java.util.List<UnderstatPlayerSeason> players = scraper.parseLeaguePlayers(json);
+
+        org.junit.jupiter.api.Assertions.assertEquals(1, players.size());
+        UnderstatPlayerSeason p = players.get(0);
+        org.junit.jupiter.api.Assertions.assertEquals("João Pedro", p.player());
+        org.junit.jupiter.api.Assertions.assertEquals(360, p.minutes());
+        org.junit.jupiter.api.Assertions.assertEquals(3, p.goals());
+        org.junit.jupiter.api.Assertions.assertEquals(3, p.assists());
+        org.junit.jupiter.api.Assertions.assertEquals(2.517, p.xg(), 1e-9);
+    }
 }
