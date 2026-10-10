@@ -42,8 +42,9 @@ public class LineupFormAdjustmentService {
     private static final int ENGLISH_PREMIER_LEAGUE_ID = 47;
 
     // Fitted effect on expected goals is exp(-0.245 * S); the rating enters
-    // the goals formula with exponent ~1.09 (see XgService), hence 0.245 / 1.089.
-    private static final double MISSING_ATTACK_COEFFICIENT = 0.245 / 1.089;
+    // the goals formula raised to XgService.ATTACK_EXPONENT, so divide by it
+    // to keep that same effect on goals.
+    static final double MISSING_ATTACK_COEFFICIENT = 0.245 / XgService.ATTACK_EXPONENT;
 
     // Only near-ever-present players count: at least this share of the most
     // minutes any squad player has in the window. A looser definition (50%)

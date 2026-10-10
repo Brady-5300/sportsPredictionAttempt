@@ -121,6 +121,12 @@ class UnderstatXgProviderTest {
     }
 
     @Test
+    void ratingsMix30PercentRealGoalsIntoEachMatchsXg() {
+        assertEquals(0.7 * 1.0 + 0.3 * 3, UnderstatXgProvider.ratingInput(1.0, 3), 1e-9);
+        assertEquals(1.0, UnderstatXgProvider.ratingInput(1.0, null), 1e-9); // no score -> plain xG
+    }
+
+    @Test
     void aPlayerWhoMovedMidSeasonOnlyCountsForTheTeamHesPlayingFor() {
         when(scraper.fetchTeamMatches("Arsenal", CURRENT_SEASON)).thenReturn(List.of(completedMatch("1", "h")));
         stubMatch("1", List.of(), List.of(), List.of(rosterEntry("Stays Here", 90, "FWR"), rosterEntry("Joined Arsenal", 90, "FWR")), List.of());

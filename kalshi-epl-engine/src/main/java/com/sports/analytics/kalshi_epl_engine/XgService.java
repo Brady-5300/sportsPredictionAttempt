@@ -71,20 +71,25 @@ public class XgService {
      * scored - i.e. the standard multiplicative model
      * goals = base * attack^a * defense^b * homeBoost. Fit with Newton's
      * method on 3,040 team-matches (EPL 2020-23) using UnderstatXgProvider's
-     * opponent-adjusted ratings, then checked on ~800 held-out 2024-26
-     * matches (Brier 0.1994; bookmakers' closing odds 0.1983). Rerun
-     * MatchXgModelCalibrationTest to recalibrate.
+     * opponent-adjusted ratings (our own shot xG mixed with 30% real goals),
+     * then checked on ~800 held-out 2024-26 matches: Brier 0.1994, vs 0.2000
+     * for the previous coefficients, which had been fit on Understat's xG
+     * rather than ours (bookmakers' closing odds: 0.1983). The refit mainly
+     * stops the model underrating big favourites (8.2 -> 4.6 points below the
+     * bookmakers on outcomes they price at 60%+).
      *
-     * Exponents near 1 mean a team rated twice as dangerous really is
-     * predicted to score about twice as much; home teams score about 19%
-     * more (exp(0.176)). Package-private so ModelValidationService can reuse
-     * the exact same formula.
+     * An attack exponent above 1 means a team rated twice as dangerous is
+     * predicted to score a bit more than twice as much; home teams score about
+     * 19% more (exp(0.175)). Package-private so ModelValidationService can
+     * reuse the exact same formula.
      */
+    static final double ATTACK_EXPONENT = 1.177;
+
     static double combineAttackDefense(double attack, double defense, boolean isHome) {
-        double logRate = -0.417
-            + 1.089 * Math.log(Math.max(attack, 0.05))
-            + 0.933 * Math.log(Math.max(defense, 0.05))
-            + 0.176 * (isHome ? 1.0 : 0.0);
+        double logRate = -0.400
+            + ATTACK_EXPONENT * Math.log(Math.max(attack, 0.05))
+            + 0.958 * Math.log(Math.max(defense, 0.05))
+            + 0.175 * (isHome ? 1.0 : 0.0);
         double xg = Math.exp(logRate);
         return Math.round(xg * 100.0) / 100.0;
     }

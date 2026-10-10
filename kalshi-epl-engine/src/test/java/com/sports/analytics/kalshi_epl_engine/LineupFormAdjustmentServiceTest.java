@@ -25,7 +25,7 @@ class LineupFormAdjustmentServiceTest {
 
     private static final TeamXgRating BASE = new TeamXgRating(2.0, 1.0, 6);
     private static final LocalDate MATCH_DATE = LocalDate.of(2026, 9, 20);
-    private static final double COEFFICIENT = 0.245 / 1.089;
+    private static final double COEFFICIENT = 0.245 / XgService.ATTACK_EXPONENT;
 
     // Saka: 2.0 xG in 360 minutes = 0.5 per 90, a quarter of the team's 2.0 attack rating.
     private static final Map<String, PlayerXgContribution> SAKA_REGULAR = Map.of(

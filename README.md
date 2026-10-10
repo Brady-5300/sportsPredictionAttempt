@@ -33,7 +33,7 @@ Every link is shareable: `#previews`, `#track` and `#scoreboard` open straight t
 
 1. **[Understat](https://understat.com)** provides shot-by-shot data for every Premier League match.
 2. **Our own xG model** (not Understat's number) scores each shot: a logistic regression on distance, angle, shot type and situation, fit on thousands of real shots.
-3. **Team ratings** average each team's xG created and conceded over its last 30 matches across this season and last, weighting recent games more and pulling small samples toward a sensible prior (promoted teams get their own). Each match's xG is scaled by the strength of the opponent, so chances created against a top defence count for more.
+3. **Team ratings** average each team's xG created and conceded over its last 30 matches across this season and last, weighting recent games more and pulling small samples toward a sensible prior (promoted teams get their own). Each match's xG is mixed with 30% of the real score, because elite sides keep finishing and saving better than xG alone gives them credit for. It's also scaled by the strength of the opponent, so chances created against a top defence count for more.
 4. **A Poisson model** turns both teams' expected goals into probabilities for every scoreline, and from there win/draw/loss.
 5. **[Kalshi's API](https://kalshi.com)** gives the live price. The edge is the model's probability minus the cost of buying YES (the ask plus Kalshi's trading fee), and stake sizes use a quarter-Kelly formula.
 6. **[FotMob](https://fotmob.com)** provides injury lists and confirmed lineups. A lineup-adjusted prediction is logged alongside the main one, so its value can be measured over time.

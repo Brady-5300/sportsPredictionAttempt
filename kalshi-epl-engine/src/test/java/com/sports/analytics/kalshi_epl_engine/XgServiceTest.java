@@ -32,11 +32,11 @@ class XgServiceTest {
         when(provider.getRating("Arsenal")).thenReturn(Optional.of(new TeamXgRating(2.2, 0.9, 6)));
         when(provider.getRating("Fulham")).thenReturn(Optional.of(new TeamXgRating(1.1, 1.6, 6)));
 
-        // homeXG = exp(-0.417 + 1.089*ln(2.2) + 0.933*ln(1.6) + 0.176) ≈ 2.88
+        // homeXG = exp(-0.400 + 1.177*ln(2.2) + 0.958*ln(1.6) + 0.175) ≈ 3.17
         // (see XgService.combineAttackDefense - the fitted Poisson regression formula)
         Optional<Double> homeXg = xgService.calculateHomeXG("Arsenal", "Fulham");
         assertTrue(homeXg.isPresent());
-        assertEquals(2.88, homeXg.get(), 0.01);
+        assertEquals(3.17, homeXg.get(), 0.01);
 
         assertTrue(xgService.hasLiveDataFor("Arsenal", "Fulham"));
     }
@@ -66,10 +66,10 @@ class XgServiceTest {
         when(provider.getRating("Arsenal")).thenReturn(Optional.of(new TeamXgRating(2.2, 0.9, 6)));
         when(provider.getRating("Fulham")).thenReturn(Optional.of(new TeamXgRating(1.1, 1.6, 6)));
 
-        // awayXG = exp(-0.417 + 1.089*ln(1.1) + 0.933*ln(0.9)) ≈ 0.66
+        // awayXG = exp(-0.400 + 1.177*ln(1.1) + 0.958*ln(0.9)) ≈ 0.68
         Optional<Double> awayXg = xgService.calculateAwayXG("Arsenal", "Fulham");
         assertTrue(awayXg.isPresent());
-        assertEquals(0.66, awayXg.get(), 0.01);
+        assertEquals(0.68, awayXg.get(), 0.01);
     }
 
     @Test
@@ -100,9 +100,9 @@ class XgServiceTest {
         Optional<Double> homeXg = xgService.calculateHomeXG("Arsenal", "Fulham");
 
         // homeXG should reflect the ADJUSTED attack (3.0), not the raw base (2.0):
-        // exp(-0.417 + 1.089*ln(3.0) + 0.933*ln(1.0) + 0.176) ≈ 2.6
+        // exp(-0.400 + 1.177*ln(3.0) + 0.958*ln(1.0) + 0.175) ≈ 2.91
         assertTrue(homeXg.isPresent());
-        assertEquals(2.6, homeXg.get(), 0.01);
+        assertEquals(2.91, homeXg.get(), 0.01);
 
         // Sanity check the direction is still right even though the exact number changed:
         // boosting attack from 2.0 to 3.0 must increase predicted xG, not decrease it.

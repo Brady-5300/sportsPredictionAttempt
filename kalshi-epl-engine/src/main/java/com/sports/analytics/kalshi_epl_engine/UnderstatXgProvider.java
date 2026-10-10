@@ -29,8 +29,10 @@ import java.util.function.ToDoubleFunction;
  * seasons (fit on 2020-23, tested on 2024-26, ~800 matches):
  * - the original 6-match, current-season-only window: ~0.211 Brier
  * - 30 matches across two seasons, shrunk toward a prior: 0.2002
- * - plus opponent adjustment: 0.1994 (better in every test season; the
- *   bookmakers' closing odds score 0.1983 on the same matches)
+ * - plus opponent adjustment (scored on our own xG): 0.2000
+ * - plus 30% real goals mixed into each match's xG, with the goals formula
+ *   refit: 0.1994 (better in every test season; the bookmakers' closing
+ *   odds score 0.1983 on the same matches)
  *
  * Opponent adjustment: 1.5 xG created against a stingy defence counts for
  * more than 1.5 xG against a leaky one. Each match's xG is scaled by how good
@@ -56,6 +58,13 @@ public class UnderstatXgProvider {
     // prior-season data and the league average would badly overrate it.
     private static final double PROMOTED_PRIOR_XG_FOR = 1.14;
     private static final double PROMOTED_PRIOR_XG_AGAINST = 1.87;
+
+    // Share of real goals mixed into each match's xG before rating. xG alone
+    // treats every team as an average finisher and goalkeeper; elite sides
+    // beat their xG year after year. 30% was picked on 2023/24 (0.1837 vs
+    // 0.1847 for xG only) and was better in every held-out season 2024-26.
+    // Only the model's ratings use the mix; xG shown to people stays pure xG.
+    static final double GOALS_SHARE_IN_RATING = 0.3;
 
     // Re-rating passes for the opponent adjustment; the numbers settle well within this.
     private static final int OPPONENT_ADJUSTMENT_ITERATIONS = 5;
@@ -247,7 +256,7 @@ public class UnderstatXgProvider {
 
     // ---------------------------------------------------------------- history
 
-    /** One team's side of one match: our xG, their xG, and who they were (null if unknown to us). */
+    /** One team's side of one match as rated: xG mixed with real goals for and against, and who they were (null if unknown to us). */
     private record MatchXg(double xgFor, double xgAgainst, String opponentSlug) {
     }
 
@@ -317,10 +326,16 @@ public class UnderstatXgProvider {
             Optional<TeamSideOfMatch> side = sideOf(match);
             if (side.isEmpty()) continue;
             String opponentTitle = "h".equals(match.getSide()) ? match.getAwayTeamTitle() : match.getHomeTeamTitle();
-            window.add(new MatchXg(sumXg(side.get().ourShots()), sumXg(side.get().theirShots()),
+            window.add(new MatchXg(ratingInput(sumXg(side.get().ourShots()), match.getOwnGoals()),
+                ratingInput(sumXg(side.get().theirShots()), match.getOpponentGoals()),
                 opponentTitle == null ? null : teamNameResolver.getUnderstatSlug(opponentTitle)));
         }
         return new History(window, current, previous.isEmpty());
+    }
+
+    /** xG mixed with real goals (see GOALS_SHARE_IN_RATING); plain xG if the score is missing. */
+    static double ratingInput(double xg, Integer goals) {
+        return goals == null ? xg : (1 - GOALS_SHARE_IN_RATING) * xg + GOALS_SHARE_IN_RATING * goals;
     }
 
     private List<UnderstatTeamMatch> completedMostRecentFirst(List<UnderstatTeamMatch> matches) {
