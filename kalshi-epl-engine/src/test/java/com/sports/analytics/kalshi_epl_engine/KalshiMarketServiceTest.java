@@ -120,4 +120,15 @@ class KalshiMarketServiceTest {
         assertNotNull(result.message());
         assertTrue(result.message().contains("connection timed out"));
     }
+
+    @Test
+    void reportsKalshiUnreachableInsteadOfAnEmptyMarketList() {
+        service.kalshiUrl = "http://127.0.0.1:1/unreachable"; // nothing listens on port 1
+
+        MarketScanResult result = service.evaluateLiveMarkets();
+
+        assertEquals(MarketScanResult.STATUS_KALSHI_UNREACHABLE, result.status());
+        assertTrue(result.evaluations().isEmpty());
+        assertTrue(result.message().startsWith("Couldn't reach Kalshi"));
+    }
 }

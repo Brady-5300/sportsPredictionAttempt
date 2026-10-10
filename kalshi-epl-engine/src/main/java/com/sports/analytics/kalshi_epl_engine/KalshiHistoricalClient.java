@@ -25,7 +25,7 @@ public class KalshiHistoricalClient {
     private static final long REQUEST_PACING_MS = 250;
     private static final int MAX_RETRIES = 5;
 
-    private final RestTemplate restTemplate = new RestTemplate();
+    private final RestTemplate restTemplate = HttpClients.withTimeouts();
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     /**

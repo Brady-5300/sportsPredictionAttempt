@@ -446,7 +446,7 @@
   <div class="banner banner-offline" id="offlineBanner">
     <span class="icon">&#9888;</span>
     <div>
-      <strong>Scrapers offline</strong>
+      <strong id="offlineTitle">Scrapers offline</strong>
       <span id="offlineMessage"></span>
     </div>
   </div>
@@ -662,13 +662,16 @@
     const content = document.getElementById('content');
 
     if (data.status !== 'OK') {
+      const kalshiDown = data.status === 'KALSHI_UNREACHABLE';
       offlineBanner.classList.add('show');
+      document.getElementById('offlineTitle').textContent = kalshiDown ? "Can't reach Kalshi" : 'Scrapers offline';
       document.getElementById('offlineMessage').textContent = data.message || 'A core data source is unavailable.';
       warningBanner.classList.remove('show');
       content.innerHTML = `
         <div class="empty-state">
-          <div class="big">No markets evaluated</div>
-          <div>Waiting for the data source to recover before scanning resumes.</div>
+          <div class="big">${kalshiDown ? 'Markets will be back shortly' : 'No markets evaluated'}</div>
+          <div>${kalshiDown ? 'Check your internet connection. The page retries every 30 seconds.'
+            : 'Waiting for the data source to recover before scanning resumes.'}</div>
         </div>`;
       return;
     }

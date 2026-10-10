@@ -1,6 +1,7 @@
 package com.sports.analytics.kalshi_epl_engine;
 
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 
 import java.time.Instant;
@@ -14,8 +15,9 @@ import java.util.Optional;
 @Service
 public class KalshiMarketService {
 
-    private final String KALSHI_URL = "https://external-api.kalshi.com/trade-api/v2/events?series_ticker=KXEPLGAME&with_nested_markets=true";
-    private final RestTemplate restTemplate = new RestTemplate();
+    // Overridable in tests, to point a scan at an address that can't be reached.
+    String kalshiUrl = "https://external-api.kalshi.com/trade-api/v2/events?series_ticker=KXEPLGAME&with_nested_markets=true";
+    private final RestTemplate restTemplate = HttpClients.withTimeouts();
     private final PoissonModel poissonModel;
     private final TickerParserService tickerParserService;
     private final XgService xgService;
@@ -53,11 +55,18 @@ public class KalshiMarketService {
         List<MarketEvaluation> results = new ArrayList<>();
         List<SkippedMarket> skipped = new ArrayList<>();
 
+        // If Kalshi can't be reached, say so - an empty list would look like "no games".
+        KalshiMarketResponse response;
         try {
-            KalshiMarketResponse response = restTemplate.getForObject(KALSHI_URL, KalshiMarketResponse.class);
-            if (response == null) {
-                return MarketScanResult.ok(fotMobWarning(), results, skipped);
-            }
+            response = restTemplate.getForObject(kalshiUrl, KalshiMarketResponse.class);
+        } catch (RestClientException e) {
+            return MarketScanResult.kalshiUnreachable(e.getMessage());
+        }
+        if (response == null) {
+            return MarketScanResult.kalshiUnreachable("empty response");
+        }
+
+        try {
 
             for (KalshiEvent event : response.getEvents()) {
                 String eventTitle = event.getTitle() == null ? "" : event.getTitle();
@@ -230,7 +239,7 @@ public class KalshiMarketService {
 
     public String fetchRawMarkets() {
         try {
-            String jsonResponse = restTemplate.getForObject(KALSHI_URL, String.class);
+            String jsonResponse = restTemplate.getForObject(kalshiUrl, String.class);
             return jsonResponse != null ? jsonResponse : "{\"error\": \"Empty response\"}";
         } catch (Exception e) {
             return "{\"error\": \"" + e.getMessage() + "\"}";

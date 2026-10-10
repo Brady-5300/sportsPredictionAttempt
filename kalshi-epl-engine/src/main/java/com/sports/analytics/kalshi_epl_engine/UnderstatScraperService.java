@@ -38,7 +38,7 @@ public class UnderstatScraperService {
     public static final String SOURCE = "understat";
 
     private static final String BASE_URL = "https://understat.com";
-    private final RestTemplate restTemplate = new RestTemplate();
+    private final RestTemplate restTemplate = HttpClients.withTimeouts();
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final ScraperHealthMonitor healthMonitor;
 

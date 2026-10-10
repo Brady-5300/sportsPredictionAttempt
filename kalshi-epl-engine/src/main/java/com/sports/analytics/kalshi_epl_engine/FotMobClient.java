@@ -58,7 +58,7 @@ public class FotMobClient {
     public FotMobClient(@Value("${fotmob.base-url}") String baseUrl, ScraperHealthMonitor healthMonitor) {
         this.baseUrl = baseUrl;
         this.healthMonitor = healthMonitor;
-        this.restTemplate = new RestTemplate();
+        this.restTemplate = HttpClients.withTimeouts();
     }
 
     // Test-only constructor: inject a mock RestTemplate, no health monitor.

@@ -18,6 +18,14 @@ public record MarketScanResult(
 ) {
     public static final String STATUS_OK = "OK";
     public static final String STATUS_UNDERSTAT_OFFLINE = "UNDERSTAT_OFFLINE";
+    public static final String STATUS_KALSHI_UNREACHABLE = "KALSHI_UNREACHABLE";
+
+    /** Kalshi's market list couldn't be loaded (e.g. the internet connection dropped). */
+    public static MarketScanResult kalshiUnreachable(String reason) {
+        String message = "Couldn't reach Kalshi" + (reason != null ? " (" + reason + ")" : "")
+            + ". This usually means the internet connection dropped; the app keeps retrying on its own.";
+        return new MarketScanResult(STATUS_KALSHI_UNREACHABLE, message, null, List.of(), List.of());
+    }
 
     public static MarketScanResult offline(String source, String reason) {
         String message = "[" + source.toUpperCase() + "] scraper appears offline"
