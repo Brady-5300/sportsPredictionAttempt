@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -42,6 +43,16 @@ public class PredictionLogService {
 
     // A bid/ask spread wider than this isn't a meaningful price to compare against.
     static final int MAX_USABLE_SPREAD_CENTS = 10;
+
+    // Confirmed lineups come out about 60-75 minutes before kickoff. A "lineups seen"
+    // snapshot from earlier than this can't be a real confirmed lineup (FotMob also
+    // publishes guessed ones days ahead), so it's never recorded - and an old one
+    // is discarded on startup.
+    private static final Duration LINEUP_WINDOW = Duration.ofHours(2);
+
+    private static boolean inLineupWindow(Instant seenAt, Instant kickoff) {
+        return !seenAt.isBefore(kickoff.minus(LINEUP_WINDOW));
+    }
 
     private final KalshiHistoricalClient historicalClient;
     private final Path logFile;
@@ -101,7 +112,7 @@ public class PredictionLogService {
                 updated = existing.withSnapshot(predictedProbability, baseProbability, bidCents, askCents, now.toString());
             }
 
-            if (beforeKickoff && lineupsConfirmed && updated.lineupsSeenAt() == null) {
+            if (beforeKickoff && lineupsConfirmed && updated.lineupsSeenAt() == null && inLineupWindow(now, kickoff.get())) {
                 updated = updated.withLineupSnapshot();
             }
             entriesByTicker.put(ticker, updated);
@@ -318,15 +329,22 @@ public class PredictionLogService {
 
     private void load() {
         if (!Files.exists(logFile)) return;
+        boolean repaired = false;
         try {
             for (String line : Files.readAllLines(logFile)) {
                 if (line.isBlank()) continue;
                 PredictionLogEntry entry = objectMapper.readValue(line, PredictionLogEntry.class);
+                if (entry.lineupsSeenAt() != null && entry.kickoff() != null
+                        && !inLineupWindow(Instant.parse(entry.lineupsSeenAt()), Instant.parse(entry.kickoff()))) {
+                    entry = entry.withoutLineupSnapshot();
+                    repaired = true;
+                }
                 entriesByTicker.put(entry.ticker(), entry);
             }
         } catch (IOException e) {
             throw new UncheckedIOException("Failed to load prediction log from " + logFile, e);
         }
+        if (repaired) persist();
     }
 
     private void persist() {

@@ -56,6 +56,13 @@ public record PredictionLogEntry(
             snapshotAt, predictedProbability, baseProbability, marketBidCents, marketAskCents);
     }
 
+    /** Drops an "at lineups" snapshot that wasn't taken from a real confirmed lineup. */
+    public PredictionLogEntry withoutLineupSnapshot() {
+        return new PredictionLogEntry(ticker, matchTitle, marketType, matchDate, predictedProbability, baseProbability,
+            marketBidCents, marketAskCents, kickoff, loggedAt, snapshotAt, resolved, actualOutcome,
+            null, null, null, null, null);
+    }
+
     public PredictionLogEntry withResolution(boolean actualOutcome) {
         return new PredictionLogEntry(ticker, matchTitle, marketType, matchDate, predictedProbability, baseProbability,
             marketBidCents, marketAskCents, kickoff, loggedAt, snapshotAt, true, actualOutcome,

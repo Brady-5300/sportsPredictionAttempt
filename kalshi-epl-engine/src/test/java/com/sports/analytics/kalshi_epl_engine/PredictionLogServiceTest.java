@@ -255,4 +255,32 @@ class PredictionLogServiceTest {
 
         assertEquals(0.0, service.marketComparison().brierDifferenceStandardError(), 1e-9);
     }
+
+    @Test
+    void ignoresLineupsSeenMoreThanTwoHoursBeforeKickoff() {
+        PredictionLogService service = serviceAt(KICKOFF.minusSeconds(2 * 86400)); // two days early
+        recordFull(service, TICKER, 0.47, 0.50, 48, 50, Optional.of(KICKOFF), true);
+
+        assertNull(service.allEntries().get(0).lineupsSeenAt());
+
+        service.nowSupplier = () -> KICKOFF.minusSeconds(3600); // confirmed lineups, an hour out
+        recordFull(service, TICKER, 0.47, 0.50, 48, 50, Optional.of(KICKOFF), true);
+
+        assertEquals(KICKOFF.minusSeconds(3600).toString(), service.allEntries().get(0).lineupsSeenAt());
+    }
+
+    @Test
+    void dropsTooEarlyLineupSnapshotsAlreadyInTheLogWhenItLoads() throws Exception {
+        PredictionLogEntry tooEarly = new PredictionLogEntry(TICKER, "t", "AWAY", "2026-09-20", 0.47, 0.50, 48, 50,
+            KICKOFF.toString(), KICKOFF.minusSeconds(3 * 86400).toString(), KICKOFF.minusSeconds(600).toString(), false, null,
+            KICKOFF.minusSeconds(2 * 86400).toString(), 0.47, 0.50, 48, 50);
+        java.nio.file.Files.writeString(tempDir.resolve("log.jsonl"), new tools.jackson.databind.ObjectMapper().writeValueAsString(tooEarly));
+
+        PredictionLogService service = serviceAt(KICKOFF.minusSeconds(600));
+
+        PredictionLogEntry entry = service.allEntries().get(0);
+        assertNull(entry.lineupsSeenAt());
+        assertNull(entry.marketBidCentsAtLineups());
+        assertEquals(48, entry.marketBidCents()); // the normal snapshot is kept
+    }
 }

@@ -181,10 +181,14 @@ public class FotMobClient {
         JsonNode home = lineup.path("homeTeam");
         JsonNode away = lineup.path("awayTeam");
 
+        // Days before a match FotMob shows its own guessed XI with lineupType "predicted" -
+        // only a real, confirmed lineup counts as starters.
+        boolean confirmed = !"predicted".equalsIgnoreCase(lineup.path("lineupType").asString(""));
+
         return new FotMobMatchLineups(
-            parseStarterNames(home),
+            confirmed ? parseStarterNames(home) : List.of(),
             parseUnavailable(home),
-            parseStarterNames(away),
+            confirmed ? parseStarterNames(away) : List.of(),
             parseUnavailable(away)
         );
     }

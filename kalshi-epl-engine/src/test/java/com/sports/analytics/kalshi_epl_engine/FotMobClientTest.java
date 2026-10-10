@@ -147,4 +147,17 @@ class FotMobClientTest {
         FotMobMatchLineups lineups = client.parseMatchLineups(null);
         assertTrue(lineups.homeStarters().isEmpty());
     }
+
+    @Test
+    void ignoresFotMobsPredictedLineupsButKeepsTheUnavailableList() {
+        String json = "{\"content\":{\"lineup\":{\"lineupType\":\"predicted\","
+            + "\"homeTeam\":{\"starters\":[{\"name\":\"Guessed Starter\"}],\"unavailable\":[{\"name\":\"Injured Guy\",\"unavailability\":{\"type\":\"injury\",\"expectedReturn\":\"Late October 2026\"}}]},"
+            + "\"awayTeam\":{\"starters\":[{\"name\":\"Another Guess\"}],\"unavailable\":[]}}}}";
+
+        FotMobMatchLineups lineups = client.parseMatchLineups(json);
+
+        org.junit.jupiter.api.Assertions.assertTrue(lineups.homeStarters().isEmpty());
+        org.junit.jupiter.api.Assertions.assertTrue(lineups.awayStarters().isEmpty());
+        org.junit.jupiter.api.Assertions.assertEquals(1, lineups.homeUnavailable().size());
+    }
 }
