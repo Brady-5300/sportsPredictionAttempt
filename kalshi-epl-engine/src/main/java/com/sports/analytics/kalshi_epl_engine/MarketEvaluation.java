@@ -14,12 +14,13 @@ public class MarketEvaluation {
     private String marketType;
     private Integer yesBidCents;
     private Integer yesAskCents;
+    private boolean live;
 
     public MarketEvaluation(String ticker, String title, int kalshiPriceCents,
                             String modelProbability, String marketProbability,
                             String edge, String recommendation, double recommendedWagerPercent,
                             String xgDataSource, String kickoff,
-                            String marketType, Integer yesBidCents, Integer yesAskCents) {
+                            String marketType, Integer yesBidCents, Integer yesAskCents, boolean live) {
         this.ticker = ticker;
         this.title = title;
         this.kalshiPriceCents = kalshiPriceCents;
@@ -33,6 +34,7 @@ public class MarketEvaluation {
         this.marketType = marketType;
         this.yesBidCents = yesBidCents;
         this.yesAskCents = yesAskCents;
+        this.live = live;
     }
 
     public String getTicker() { return ticker; }
@@ -51,6 +53,12 @@ public class MarketEvaluation {
     /** Best YES bid/ask in cents, or null if not quoted - their midpoint is the market's own probability. */
     public Integer getYesBidCents() { return yesBidCents; }
     public Integer getYesAskCents() { return yesAskCents; }
+    /**
+     * True once the match has kicked off: the model is pre-match only (it knows
+     * nothing about the score or time left), so live markets carry Kalshi's
+     * price but no model number, verdict or stake, and must never be bet on.
+     */
+    public boolean isLive() { return live; }
 
     @Override
     public String toString() {

@@ -42,6 +42,7 @@ public class PreviewService {
     public List<MatchPreview> build(List<MarketEvaluation> evaluations) {
         Map<String, List<MarketEvaluation>> byMatch = new LinkedHashMap<>();
         for (MarketEvaluation e : evaluations) {
+            if (e.isLive()) continue; // previews are the pre-match view
             byMatch.computeIfAbsent(matchKey(e.getTicker()), k -> new ArrayList<>()).add(e);
         }
 

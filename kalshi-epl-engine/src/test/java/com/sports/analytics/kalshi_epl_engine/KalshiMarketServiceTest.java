@@ -131,4 +131,30 @@ class KalshiMarketServiceTest {
         assertTrue(result.evaluations().isEmpty());
         assertTrue(result.message().startsWith("Couldn't reach Kalshi"));
     }
+
+    @Test
+    void aMatchIsLiveFromKickoffOnwards() {
+        java.time.Instant kickoff = java.time.Instant.parse("2026-10-10T14:00:00Z");
+        assertTrue(!KalshiMarketService.isLive(java.util.Optional.of(kickoff), kickoff.minusSeconds(60)));
+        assertTrue(KalshiMarketService.isLive(java.util.Optional.of(kickoff), kickoff));
+        assertTrue(KalshiMarketService.isLive(java.util.Optional.of(kickoff), kickoff.plusSeconds(3000)));
+        assertTrue(!KalshiMarketService.isLive(java.util.Optional.empty(), kickoff));
+    }
+
+    @Test
+    void liveMarketsCarryKalshisPriceButNoVerdictModelNumberOrStake() {
+        KalshiMarket market = marketWithTicker("KXEPLGAME-26OCT10ARSLEE-ARS");
+        market.setYesBidDollars("0.94");
+        market.setYesAskDollars("0.96");
+        market.setOccurrenceDatetime("2026-10-10T14:30:00Z");
+
+        MarketEvaluation live = KalshiMarketService.liveEvaluation(market, "Arsenal vs Leeds United: Arsenal wins", "HOME");
+
+        assertTrue(live.isLive());
+        assertEquals("LIVE", live.getRecommendation());
+        assertEquals(0.0, live.getRecommendedWagerPercent());
+        assertEquals("", live.getModelProbability());
+        assertEquals("", live.getEdge());
+        assertEquals(95, live.getKalshiPriceCents()); // bid/ask midpoint
+    }
 }

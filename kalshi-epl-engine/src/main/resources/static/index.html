@@ -197,6 +197,8 @@
   .badge-yes { background: var(--green-bg-strong); color: var(--green); }
   .badge-no { background: var(--red-bg); color: var(--red); }
   .badge-fair { background: rgba(0,0,0,0.05); color: var(--text-secondary); }
+  .badge-live { background: rgba(0,0,0,0.05); color: var(--red); letter-spacing: 0.04em; }
+  .live-row .market-title { color: var(--text-secondary); }
 
   .skipped-row {
     padding: 12px 16px;
@@ -621,6 +623,32 @@
       </div>`;
   }
 
+  // Matches in progress: Kalshi's live price only. The model is pre-match and knows
+  // nothing about the score or clock, so there's deliberately no verdict or stake here.
+  function renderLiveNow(live) {
+    const rows = live.map(m => `
+      <div class="market-row live-row">
+        <div class="market-left">
+          <div class="market-title">${escapeHtml(m.title)}</div>
+          <div class="market-meta">
+            ${m.kickoff ? `<span>Kicked off ${escapeHtml(fmtKickoffTime(m.kickoff))}</span>` : ''}
+            <span>In play: pre-match model only, not a betting signal</span>
+          </div>
+        </div>
+        <div class="market-right">
+          <div class="stat">
+            <div class="label">Kalshi now</div>
+            <div class="value">${m.kalshiPriceCents}&cent;</div>
+          </div>
+          <span class="badge badge-live">&#9679; LIVE</span>
+        </div>
+      </div>`).join('');
+    return `
+      <div class="section-title">Live now</div>
+      <div class="card-list">${rows}</div>
+      <p class="explain">Kalshi keeps trading during matches, so these prices react to the score. The app's model only predicts before kickoff, so it makes no suggestions on games in progress.</p>`;
+  }
+
   function renderSkippedRow(s) {
     return `
       <div class="skipped-row">
@@ -687,15 +715,20 @@
 
     let html = '';
 
-    if (data.evaluations && data.evaluations.length > 0) {
-      html += renderMarketsByDay(data.evaluations);
-    } else {
+    const evaluations = data.evaluations || [];
+    const upcoming = evaluations.filter(m => !m.live);
+    const live = evaluations.filter(m => m.live);
+
+    if (upcoming.length > 0) {
+      html += renderMarketsByDay(upcoming);
+    } else if (live.length === 0) {
       html += `
         <div class="empty-state">
           <div class="big">No active markets right now</div>
           <div>Check back closer to kickoff.</div>
         </div>`;
     }
+    if (live.length > 0) html += renderLiveNow(live);
 
     if (data.skipped && data.skipped.length > 0) {
       html += '<div class="section-title">Skipped (' + data.skipped.length + ')</div>';

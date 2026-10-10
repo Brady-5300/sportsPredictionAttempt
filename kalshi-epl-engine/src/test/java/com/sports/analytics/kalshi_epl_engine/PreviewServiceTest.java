@@ -24,7 +24,7 @@ class PreviewServiceTest {
 
     private MarketEvaluation market(String ticker, String title, String type, Integer bid, Integer ask, String kickoff) {
         return new MarketEvaluation(ticker, title, ask == null ? 0 : ask, "", "", "", "FAIR VALUE", 0.0, "understat-live",
-            kickoff, type, bid, ask);
+            kickoff, type, bid, ask, false);
     }
 
     private List<MarketEvaluation> arsenalLeeds(String kickoff) {
@@ -130,5 +130,15 @@ class PreviewServiceTest {
 
     private static double fact(int n) {
         return n <= 1 ? 1 : n * fact(n - 1);
+    }
+
+    @Test
+    void leavesOutMatchesThatHaveKickedOff() {
+        stubTeams();
+        List<MarketEvaluation> live = List.of(
+            new MarketEvaluation("KXEPLGAME-26OCT10ARSLEE-ARS", "Arsenal vs Leeds United: Arsenal wins", 95, "", "95.0%", "",
+                "LIVE", 0.0, "kalshi-live", "2026-10-10T11:30:00Z", "HOME", 94, 96, true));
+
+        assertTrue(service.build(live).isEmpty());
     }
 }

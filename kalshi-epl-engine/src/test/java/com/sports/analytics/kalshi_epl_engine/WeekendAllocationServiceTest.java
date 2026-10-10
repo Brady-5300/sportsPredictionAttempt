@@ -19,7 +19,7 @@ class WeekendAllocationServiceTest {
 
     private MarketEvaluation market(String ticker, int priceCents, String recommendation, double kellyPercent, String kickoffUtc) {
         return new MarketEvaluation(ticker, ticker + " title", priceCents, "40%", priceCents + "%", "5%",
-            recommendation, kellyPercent, "understat-live", kickoffUtc, "HOME", priceCents - 1, priceCents);
+            recommendation, kellyPercent, "understat-live", kickoffUtc, "HOME", priceCents - 1, priceCents, false);
     }
 
     @Test
@@ -81,5 +81,16 @@ class WeekendAllocationServiceTest {
         assertTrue(result.picks().isEmpty());
         assertEquals(0.0, result.costDollars(), 1e-9);
         assertEquals(25.0, result.unspentDollars(), 1e-9);
+    }
+
+    @Test
+    void neverIncludesAMatchThatsAlreadyLive() {
+        MarketEvaluation live = new MarketEvaluation("live", "live title", 20, "40%", "20%", "5%",
+            "YES (Undervalued)", 3.0, "understat-live", "2026-10-10T14:00:00Z", "HOME", 19, 20, true);
+        MarketEvaluation upcoming = market("upcoming", 30, "YES (Undervalued)", 2.0, "2026-10-11T13:00:00Z");
+
+        WeekendAllocation result = service.allocate(50.0, List.of(live, upcoming), THURSDAY);
+
+        assertEquals(List.of("upcoming"), result.picks().stream().map(WeekendAllocation.Pick::ticker).toList());
     }
 }

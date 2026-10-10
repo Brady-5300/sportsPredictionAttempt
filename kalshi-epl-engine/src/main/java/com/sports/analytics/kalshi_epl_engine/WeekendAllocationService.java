@@ -35,6 +35,7 @@ public class WeekendAllocationService {
         ZonedDateTime windowEnd = weekendEnd(now);
 
         List<MarketEvaluation> picks = evaluations.stream()
+            .filter(e -> !e.isLive())
             .filter(e -> e.getRecommendation() != null && e.getRecommendation().startsWith("YES"))
             .filter(e -> e.getRecommendedWagerPercent() > 0)
             .filter(e -> e.getKickoff() != null)

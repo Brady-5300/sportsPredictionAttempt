@@ -11,6 +11,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Supplier;
 
 @Service
 public class KalshiMarketService {
@@ -23,6 +24,12 @@ public class KalshiMarketService {
     private final XgService xgService;
     private final ScraperHealthMonitor healthMonitor;
     private final PredictionLogService predictionLogService;
+
+    // Overridable in tests.
+    Supplier<Instant> nowSupplier = Instant::now;
+
+    /** Recommendation shown for a match in progress - deliberately not a verdict. */
+    static final String LIVE = "LIVE";
 
     public KalshiMarketService(PoissonModel poissonModel,
                                 TickerParserService tickerParserService,
@@ -90,6 +97,13 @@ public class KalshiMarketService {
                     String homeTeam = teams.getKey().replaceAll("(?i)\\s+(wins|is the result)$", "").trim();
                     String awayTeam = teams.getValue().replaceAll("(?i)\\s+(wins|is the result)$", "").trim();
                     String ticker = market.getTicker() == null ? "N/A" : market.getTicker();
+
+                    // The model is pre-match only - once a match kicks off, Kalshi's price
+                    // reflects the score and clock, so comparing them would invent fake edges.
+                    if (isLive(market.estimatedKickoff(), nowSupplier.get())) {
+                        results.add(liveEvaluation(market, fullTitle, resolveMarketType(market, rawTitle, homeTeam, awayTeam)));
+                        continue;
+                    }
 
                     // A core-source outage detected mid-scan (started healthy, failed partway
                     // through) - stop evaluating rather than mix real and now-stale data.
@@ -169,7 +183,8 @@ public class KalshiMarketService {
                         market.estimatedKickoff().map(Instant::toString).orElse(null),
                         marketType,
                         market.yesBidCents().orElse(null),
-                        market.yesAskCents().orElse(null)
+                        market.yesAskCents().orElse(null),
+                        false
                     ));
                 }
             }
@@ -182,6 +197,23 @@ public class KalshiMarketService {
         results.sort(Comparator.comparing(MarketEvaluation::getKickoff, Comparator.nullsLast(Comparator.naturalOrder()))
             .thenComparing(MarketEvaluation::getTicker));
         return MarketScanResult.ok(fotMobWarning(), results, skipped);
+    }
+
+    /** A match counts as live from kickoff until Kalshi stops listing its markets as active. */
+    static boolean isLive(Optional<Instant> kickoff, Instant now) {
+        return kickoff.map(k -> !now.isBefore(k)).orElse(false);
+    }
+
+    /** Kalshi's live price only - no model probability, edge, verdict or stake. */
+    static MarketEvaluation liveEvaluation(KalshiMarket market, String fullTitle, String marketType) {
+        Integer bid = market.yesBidCents().orElse(null);
+        Integer ask = market.yesAskCents().orElse(null);
+        int priceCents = bid != null && ask != null && ask > bid ? Math.round((bid + ask) / 2f) : market.resolvePriceCents();
+        return new MarketEvaluation(
+            market.getTicker() == null ? "N/A" : market.getTicker(), fullTitle, priceCents,
+            "", priceCents + ".0%", "", LIVE, 0.0, "kalshi-live",
+            market.estimatedKickoff().map(Instant::toString).orElse(null),
+            marketType, bid, ask, true);
     }
 
     private String fotMobWarning() {
