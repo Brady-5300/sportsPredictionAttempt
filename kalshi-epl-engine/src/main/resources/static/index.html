@@ -899,8 +899,12 @@
     try {
       const res = await fetch('/api/prediction-log/track-record');
       const record = await res.json();
+      let speedHtml = '';
+      try {
+        speedHtml = renderLineupSpeed(await (await fetch('/api/prediction-log/lineup-speed')).json());
+      } catch (e) { /* the scoreboard still shows without it */ }
       document.getElementById('trackContent').innerHTML = record.finishedMatches ? renderTrackRecord(record) : EMPTY_LOG;
-      document.getElementById('scoreboardContent').innerHTML = record.finishedMatches ? renderScoreboard(record) : EMPTY_LOG;
+      document.getElementById('scoreboardContent').innerHTML = (record.finishedMatches ? renderScoreboard(record) : EMPTY_LOG) + speedHtml;
     } catch (e) {
       const msg = `<div class="empty-state">Couldn't load the track record: ${escapeHtml(e.message)}</div>`;
       document.getElementById('trackContent').innerHTML = msg;
@@ -1001,6 +1005,46 @@
       "Model" is the version the app's picks use; "Kalshi" is the market's price just before kickoff.</p>
       <div class="section-title">Weekend by weekend</div>
       <div class="card-list">${weeks}</div>`;
+  }
+
+  // Does Kalshi react to confirmed lineups slower than the app? See LineupSpeedReport.
+  function renderLineupSpeed(s) {
+    const cents = (c) => (c > 0 ? '+' : c < 0 ? '&minus;' : '') + Math.abs(c).toFixed(1) + '&cent;';
+    const cls = (c) => c > 0 ? 'pos' : c < 0 ? 'neg' : '';
+    const trade = (t, label, sub) => `
+      <div class="tile">
+        <div class="label">${label}</div>
+        <div class="value ${t.trades ? cls(t.avgProfitCents) : ''}">${t.trades ? cents(t.avgProfitCents) : '&ndash;'}</div>
+        <div class="sub">${t.trades ? `per contract after fees, over ${t.trades} trade${t.trades === 1 ? '' : 's'} (&plusmn;${(2 * t.standardErrorCents).toFixed(1)}&cent;)` : sub}</div>
+      </div>`;
+    const path = s.pathAfterLineups.length ? s.pathAfterLineups.map(c => `
+      <div class="week-row">
+        <div><strong>+${c.minutesAfterLineups} min</strong> <span style="color:var(--text-secondary)">&middot; ${c.markets} market${c.markets === 1 ? '' : 's'}</span></div>
+        <div class="nums ${cls(c.avgMoveTowardSignalCents)}">${cents(c.avgMoveTowardSignalCents)} our way</div>
+      </div>`).join('') : '<div class="empty-state">No price checkpoints yet. They\'re recorded during the hour after lineups come out.</div>';
+    return `
+      <div class="section-title">Lineup speed test</div>
+      <div class="tiles">
+        <div class="tile">
+          <div class="label">Matches tested</div>
+          <div class="value">${s.signalMatches} <span style="font-size:15px;color:var(--text-secondary)">/ ${s.targetMatches}</span></div>
+          <div class="sub">where the confirmed lineup moved our number by 2+ points</div>
+        </div>
+        <div class="tile">
+          <div class="label">Kalshi moved before we saw lineups</div>
+          <div class="value ${cls(s.avgMoveBeforeSeenCents)}">${s.marketsWithPriceBefore ? cents(s.avgMoveBeforeSeenCents) : '&ndash;'}</div>
+          <div class="sub">${s.marketsWithPriceBefore ? 'average move our way, already priced in' : 'needs the app running before lineups come out'}</div>
+        </div>
+        ${trade(s.flip, 'Buy at lineups, sell at kickoff', 'no trades yet')}
+        ${trade(s.hold, 'Buy at lineups, hold to the result', 'no settled trades yet')}
+      </div>
+      <div class="scoreline"><div class="verdict">${escapeHtml(s.verdict)}</div></div>
+      <p class="explain">Confirmed lineups come out about an hour before kickoff. The app sees them within a minute and adjusts its number;
+      this test checks whether Kalshi's price follows afterwards, and whether trading in that window would make money
+      after Kalshi's fees (paid on every buy and sell). The rule was set before any data came in: after ${s.targetMatches} matches,
+      the edge only counts if a trade's 95% range is entirely above zero.</p>
+      <div class="section-title">How Kalshi's price moves after lineups</div>
+      <div class="card-list">${path}</div>`;
   }
 
   document.getElementById('refreshBtn').addEventListener('click', loadData);

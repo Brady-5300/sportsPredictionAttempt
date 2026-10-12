@@ -99,6 +99,88 @@ class PredictionLogServiceTest {
         assertEquals(3.0, report.avgAbsoluteMoveCents(), 1e-9);
     }
 
+    @Test
+    void keepsThePriceFromJustBeforeLineupsAndAtCheckpointsAfter() {
+        PredictionLogService service = serviceAt(KICKOFF.minusSeconds(65 * 60));
+        recordFull(service, TICKER, 0.50, 0.50, 49, 51, Optional.of(KICKOFF), false);
+        service.nowSupplier = () -> KICKOFF.minusSeconds(64 * 60); // lineups seen a minute later
+        recordFull(service, TICKER, 0.47, 0.50, 48, 50, Optional.of(KICKOFF), true);
+        service.nowSupplier = () -> KICKOFF.minusSeconds(59 * 60); // +5 minutes
+        recordFull(service, TICKER, 0.47, 0.50, 46, 48, Optional.of(KICKOFF), true);
+        service.nowSupplier = () -> KICKOFF.minusSeconds(58 * 60); // +6: the 5-minute checkpoint is already taken
+        recordFull(service, TICKER, 0.47, 0.50, 40, 42, Optional.of(KICKOFF), true);
+        service.nowSupplier = () -> KICKOFF.minusSeconds(40 * 60); // +24: inside the 20-minute checkpoint's tolerance
+        recordFull(service, TICKER, 0.47, 0.50, 45, 47, Optional.of(KICKOFF), true);
+
+        PredictionLogEntry entry = service.allEntries().get(0);
+        assertEquals(49, entry.marketBidCentsBeforeLineups());
+        assertEquals(51, entry.marketAskCentsBeforeLineups());
+        assertEquals(KICKOFF.minusSeconds(65 * 60).toString(), entry.priceBeforeLineupsAt());
+        assertEquals(java.util.List.of(new PredictionLogEntry.PriceCheck(5, 46, 48), new PredictionLogEntry.PriceCheck(20, 45, 47)),
+            entry.pricesAfterLineups());
+    }
+
+    @Test
+    void ignoresAPriceBeforeLineupsFromAScanLongAgo() {
+        PredictionLogService service = serviceAt(KICKOFF.minusSeconds(5 * 3600)); // laptop was off in between
+        recordFull(service, TICKER, 0.50, 0.50, 49, 51, Optional.of(KICKOFF), false);
+        service.nowSupplier = () -> KICKOFF.minusSeconds(3600);
+        recordFull(service, TICKER, 0.47, 0.50, 48, 50, Optional.of(KICKOFF), true);
+
+        assertNull(service.allEntries().get(0).marketBidCentsBeforeLineups());
+    }
+
+    @Test
+    void tradeTestPaysKalshisFeeOnEveryTradeAndBuysNoWhenOurReadIsLower() {
+        PredictionLogService service = serviceAt(KICKOFF.minusSeconds(65 * 60));
+        recordFull(service, TICKER, 0.50, 0.50, 49, 51, Optional.of(KICKOFF), false);
+        // Lineups: our read drops 3 points, so the trade is buying NO at 100 - 48 = 52c (fee 2c).
+        service.nowSupplier = () -> KICKOFF.minusSeconds(64 * 60);
+        recordFull(service, TICKER, 0.47, 0.50, 48, 50, Optional.of(KICKOFF), true);
+        // By kickoff YES is 45/47, so NO sells at 100 - 47 = 53c (fee 2c).
+        service.nowSupplier = () -> KICKOFF.minusSeconds(60);
+        recordFull(service, TICKER, 0.47, 0.50, 45, 47, Optional.of(KICKOFF), true);
+        when(client.fetchSingleMarket(TICKER)).thenReturn(Optional.of(settled("no")));
+        service.nowSupplier = () -> KICKOFF.plusSeconds(3 * 3600);
+        service.checkForResolutions();
+
+        LineupSpeedReport report = service.lineupSpeedReport();
+
+        assertEquals(1, report.signalMatches());
+        assertEquals(1.0, report.avgMoveBeforeSeenCents(), 1e-9);    // mid 50 -> 49 before we saw it: 1c our way
+        assertEquals(-3.0, report.flip().avgProfitCents(), 1e-9);    // 53 - 52 - 2 - 2: the move doesn't cover fees
+        assertEquals(46.0, report.hold().avgProfitCents(), 1e-9);    // NO settles at 100: 100 - 52 - 2
+        assertTrue(report.verdict().startsWith("Collecting data: 1 of 40"));
+    }
+
+    @Test
+    void knowsWhenAMatchIsCloseToKickoff() {
+        PredictionLogService service = serviceAt(KICKOFF.minusSeconds(3 * 3600));
+        record(service, TICKER, 0.50, 49, 51, Optional.of(KICKOFF));
+
+        assertTrue(!service.hasMatchKickingOffWithin(java.time.Duration.ofMinutes(100)));
+        service.nowSupplier = () -> KICKOFF.minusSeconds(90 * 60);
+        assertTrue(service.hasMatchKickingOffWithin(java.time.Duration.ofMinutes(100)));
+        service.nowSupplier = () -> KICKOFF.plusSeconds(60); // kicked off
+        assertTrue(!service.hasMatchKickingOffWithin(java.time.Duration.ofMinutes(100)));
+    }
+
+    @Test
+    void loadsLogLinesWrittenBeforeTheSpeedTestFieldsExisted() throws Exception {
+        java.nio.file.Files.writeString(tempDir.resolve("log.jsonl"),
+            "{\"ticker\":\"" + TICKER + "\",\"matchTitle\":\"t\",\"marketType\":\"AWAY\",\"matchDate\":\"2026-09-20\","
+                + "\"predictedProbability\":0.47,\"baseProbability\":0.5,\"marketBidCents\":48,\"marketAskCents\":50,"
+                + "\"kickoff\":\"" + KICKOFF + "\",\"loggedAt\":\"" + KICKOFF.minusSeconds(86400) + "\",\"snapshotAt\":\"" + KICKOFF.minusSeconds(600) + "\","
+                + "\"resolved\":false,\"actualOutcome\":null,\"lineupsSeenAt\":null,\"predictedProbabilityAtLineups\":null,"
+                + "\"baseProbabilityAtLineups\":null,\"marketBidCentsAtLineups\":null,\"marketAskCentsAtLineups\":null}");
+
+        PredictionLogEntry entry = serviceAt(KICKOFF.minusSeconds(600)).allEntries().get(0);
+
+        assertEquals(48, entry.marketBidCents());
+        assertNull(entry.marketBidCentsBeforeLineups());
+        assertTrue(entry.pricesAfterLineups().isEmpty());
+    }
+
     private KalshiMarket settled(String result) {
         KalshiMarket market = new KalshiMarket();
         market.setResult(result);

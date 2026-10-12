@@ -102,6 +102,11 @@ public class PoissonModel {
      * toward the extremes.
      */
     public int calculateKalshiFeeCents(int priceCents) {
+        return kalshiFeeCents(priceCents);
+    }
+
+    /** Static form of {@link #calculateKalshiFeeCents}, for code without a PoissonModel. */
+    static int kalshiFeeCents(int priceCents) {
         if (priceCents <= 0 || priceCents >= 100) return 0;
 
         double price = priceCents / 100.0;

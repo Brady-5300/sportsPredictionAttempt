@@ -13,10 +13,12 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -49,6 +51,19 @@ public class PredictionLogService {
     // publishes guessed ones days ahead), so it's never recorded - and an old one
     // is discarded on startup.
     private static final Duration LINEUP_WINDOW = Duration.ofHours(2);
+
+    // Lineup-speed test. The price from the scan before lineups were seen only
+    // counts if that scan was recent; after lineups, Kalshi's price is kept at
+    // these checkpoints (minutes), each from the first scan that reaches it.
+    private static final Duration BEFORE_LINEUPS_MAX_AGE = Duration.ofMinutes(15);
+    static final int[] PRICE_CHECKPOINTS_MINUTES = {5, 10, 15, 20, 30, 45, 60};
+    private static final int CHECKPOINT_TOLERANCE_MINUTES = 5;
+
+    // How far our lineup adjustment must move a probability to count as a trade
+    // signal, and how many such matches the test needs before giving a verdict.
+    // Both were fixed before any data came in, so they can't be tuned to the result.
+    static final double TRADE_SIGNAL = 0.02;
+    static final int SPEED_TEST_TARGET_MATCHES = 40;
 
     private static boolean inLineupWindow(Instant seenAt, Instant kickoff) {
         return !seenAt.isBefore(kickoff.minus(LINEUP_WINDOW));
@@ -113,13 +128,43 @@ public class PredictionLogService {
             }
 
             if (beforeKickoff && lineupsConfirmed && updated.lineupsSeenAt() == null && inLineupWindow(now, kickoff.get())) {
-                updated = updated.withLineupSnapshot();
+                boolean recentBefore = existing != null && existing.snapshotAt() != null
+                    && !Instant.parse(existing.snapshotAt()).isBefore(now.minus(BEFORE_LINEUPS_MAX_AGE));
+                updated = recentBefore
+                    ? updated.withLineupSnapshot(existing.marketBidCents(), existing.marketAskCents(), existing.snapshotAt())
+                    : updated.withLineupSnapshot(null, null, null);
+            } else if (beforeKickoff && existing != null && existing.lineupsSeenAt() != null) {
+                updated = withDuePriceCheck(updated, now, bidCents, askCents);
             }
             entriesByTicker.put(ticker, updated);
             persist();
         } finally {
             lock.unlock();
         }
+    }
+
+    /** Adds the checkpoint this scan reaches, unless it's already taken or this scan is too late for it. */
+    private static PredictionLogEntry withDuePriceCheck(PredictionLogEntry entry, Instant now, Integer bid, Integer ask) {
+        long minutes = Duration.between(Instant.parse(entry.lineupsSeenAt()), now).toMinutes();
+        for (int checkpoint : PRICE_CHECKPOINTS_MINUTES) {
+            boolean taken = entry.pricesAfterLineups().stream().anyMatch(c -> c.minutesAfterLineups() == checkpoint);
+            if (!taken && minutes >= checkpoint && minutes < checkpoint + CHECKPOINT_TOLERANCE_MINUTES) {
+                return entry.withPriceCheck(checkpoint, bid, ask);
+            }
+        }
+        return entry;
+    }
+
+    /**
+     * True while some logged, unresolved match kicks off within {@code window}
+     * of now - when lineups are due or just out, so it's worth scanning often.
+     */
+    public boolean hasMatchKickingOffWithin(Duration window) {
+        Instant now = nowSupplier.get();
+        return allEntries().stream()
+            .filter(e -> !e.resolved() && e.kickoff() != null)
+            .map(e -> Instant.parse(e.kickoff()))
+            .anyMatch(k -> now.isBefore(k) && !k.isAfter(now.plus(window)));
     }
 
     /**
@@ -258,11 +303,107 @@ public class PredictionLogService {
         }
 
         double avgToward = n == 0 ? 0.0 : towardSumByMatch.values().stream().mapToDouble(Double::doubleValue).sum() / n;
+
+        // ---- trade test: markets where our lineup read moved the probability by TRADE_SIGNAL or more
+        Clustered before = new Clustered();
+        Clustered flip = new Clustered();
+        Clustered hold = new Clustered();
+        Map<Integer, Clustered> checkpoints = new LinkedHashMap<>();
+        for (int c : PRICE_CHECKPOINTS_MINUTES) checkpoints.put(c, new Clustered());
+        Set<String> signalMatches = new HashSet<>();
+
+        for (PredictionLogEntry e : allEntries()) {
+            if (e.lineupsSeenAt() == null || e.kickoff() == null || now.isBefore(Instant.parse(e.kickoff()))) continue;
+            if (e.predictedProbabilityAtLineups() == null || e.baseProbabilityAtLineups() == null) continue;
+            double signal = e.predictedProbabilityAtLineups() - e.baseProbabilityAtLineups();
+            if (Math.abs(signal) < TRADE_SIGNAL) continue;
+            Optional<Double> atLineups = e.marketMidProbabilityAtLineups(MAX_USABLE_SPREAD_CENTS);
+            if (atLineups.isEmpty()) continue;
+            String match = matchKey(e.ticker());
+            signalMatches.add(match);
+            double sign = Math.signum(signal);
+
+            e.marketMidProbabilityBeforeLineups(MAX_USABLE_SPREAD_CENTS)
+                .ifPresent(b -> before.add(match, sign * (atLineups.get() - b) * 100));
+            for (PredictionLogEntry.PriceCheck check : e.pricesAfterLineups()) {
+                Clustered bucket = checkpoints.get(check.minutesAfterLineups());
+                if (bucket == null) continue;
+                PredictionLogEntry.midpoint(check.bidCents(), check.askCents(), MAX_USABLE_SPREAD_CENTS)
+                    .ifPresent(p -> bucket.add(match, sign * (p - atLineups.get()) * 100));
+            }
+
+            // Buy YES (signal up) or NO (signal down) at the lineup-time ask, paying Kalshi's fee.
+            // A NO contract costs 100 minus the YES bid.
+            int buy = sign > 0 ? e.marketAskCentsAtLineups() : 100 - e.marketBidCentsAtLineups();
+            int buyFee = PoissonModel.kalshiFeeCents(buy);
+            // Flip: sell at the last pre-kickoff bid, paying the fee again.
+            if (e.marketMidProbability(MAX_USABLE_SPREAD_CENTS).isPresent()
+                    && Instant.parse(e.snapshotAt()).isAfter(Instant.parse(e.lineupsSeenAt()))) {
+                int sell = sign > 0 ? e.marketBidCents() : 100 - e.marketAskCents();
+                flip.add(match, sell - buy - buyFee - PoissonModel.kalshiFeeCents(sell));
+            }
+            // Hold: keep the contract until Kalshi settles it.
+            if (e.resolved()) {
+                boolean wins = sign > 0 ? e.actualOutcome() : !e.actualOutcome();
+                hold.add(match, (wins ? 100 : 0) - buy - buyFee);
+            }
+        }
+
+        List<LineupSpeedReport.Checkpoint> path = new ArrayList<>();
+        checkpoints.forEach((minutes, c) -> {
+            if (c.n > 0) path.add(new LineupSpeedReport.Checkpoint(minutes, c.n, c.mean(), c.se()));
+        });
         return new LineupSpeedReport(withBothPrices, n,
             CalibrationMath.round4(avgToward),
             CalibrationMath.round4(clusteredStandardError(towardSumByMatch, countByMatch, n)),
             n == 0 ? 0.0 : CalibrationMath.round4((double) towardCount / n),
-            withBothPrices == 0 ? 0.0 : CalibrationMath.round4(absoluteMoveSum / withBothPrices));
+            withBothPrices == 0 ? 0.0 : CalibrationMath.round4(absoluteMoveSum / withBothPrices),
+            signalMatches.size(), SPEED_TEST_TARGET_MATCHES,
+            before.n, before.mean(), before.se(),
+            path, flip.toTrade(), hold.toTrade(),
+            speedVerdict(signalMatches.size(), flip, hold));
+    }
+
+    /** The decision rule, fixed in advance: a trade must make money after fees with its 95% range above zero. */
+    private static String speedVerdict(int matches, Clustered flip, Clustered hold) {
+        if (matches < SPEED_TEST_TARGET_MATCHES) {
+            return "Collecting data: " + matches + " of " + SPEED_TEST_TARGET_MATCHES + " matches with a lineup signal so far.";
+        }
+        boolean flipWins = flip.n > 0 && flip.mean() - 2 * flip.se() > 0;
+        boolean holdWins = hold.n > 0 && hold.mean() - 2 * hold.se() > 0;
+        if (flipWins || holdWins) {
+            return "Speed edge found: trading on lineups made money after Kalshi's fees"
+                + (flipWins ? " (buying at lineups, selling at kickoff)" : " (buying at lineups and holding)")
+                + ", with the 95% range above zero.";
+        }
+        return "No tradable speed edge: after Kalshi's fees and spread, trading on lineups didn't reliably make money.";
+    }
+
+    /** Per-market values grouped by match, for an average with a match-clustered standard error. */
+    private static final class Clustered {
+        final Map<String, Double> sumByMatch = new HashMap<>();
+        final Map<String, Integer> countByMatch = new HashMap<>();
+        int n;
+        double total;
+
+        void add(String match, double value) {
+            sumByMatch.merge(match, value, Double::sum);
+            countByMatch.merge(match, 1, Integer::sum);
+            n++;
+            total += value;
+        }
+
+        double mean() {
+            return n == 0 ? 0.0 : CalibrationMath.round4(total / n);
+        }
+
+        double se() {
+            return CalibrationMath.round4(clusteredStandardError(sumByMatch, countByMatch, n));
+        }
+
+        LineupSpeedReport.Trade toTrade() {
+            return new LineupSpeedReport.Trade(n, mean(), se(), CalibrationMath.round4(total));
+        }
     }
 
     private List<PredictionLogEntry> resolvedEntries() {

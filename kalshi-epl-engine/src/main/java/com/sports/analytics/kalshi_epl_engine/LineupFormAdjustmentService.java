@@ -55,10 +55,10 @@ public class LineupFormAdjustmentService {
     private static final Pattern EXPECTED_RETURN_PATTERN =
         Pattern.compile("(?i)\\b(early|mid|late)\\s+([a-z]+)\\s+(\\d{4})\\b");
 
-    // Politeness toward FotMob - but on match day re-check every scan, so a
-    // posted lineup is noticed within minutes rather than up to half an hour late.
+    // Politeness toward FotMob - but on match day re-check every minute-scan, so a
+    // posted lineup is noticed within about a minute (the lineup-speed test needs that).
     private static final long CACHE_TTL_SECONDS = 30 * 60;
-    private static final long MATCH_DAY_CACHE_TTL_SECONDS = 4 * 60;
+    private static final long MATCH_DAY_CACHE_TTL_SECONDS = 50;
 
     private final FotMobClient fotMobClient;
     private final UnderstatXgProvider understatXgProvider;
